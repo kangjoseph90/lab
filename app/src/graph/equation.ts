@@ -4,6 +4,7 @@ import {
     compile,
     compileInterval,
     differentiate,
+    lowerComplexScalar,
     neg,
     parse,
 } from '@lab/math';
@@ -47,12 +48,22 @@ export function parseEquation(input: string): Equation {
     if (!left) throw new Error('Enter an expression.');
     if (operator && !right) throw new Error('Enter the right side of the equation.');
 
-    const expr = right ? add(parse(left), neg(parse(right))) : parse(left);
-    const unknown = [...collectSymbols(expr)].filter((name) => name !== 'x' && name !== 'y');
+    const parsed = right ? add(parse(left), neg(parse(right))) : parse(left);
+    const symbols = [...collectSymbols(parsed)];
+    const unknown = symbols.filter((name) => name !== 'x' && name !== 'y' && name !== 'z');
 
     if (unknown.length > 0) {
         throw new Error(`Unknown symbol${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`);
     }
+
+    const usesRealCoordinates = symbols.includes('x') || symbols.includes('y');
+    const usesComplexCoordinate = symbols.includes('z');
+
+    if (usesRealCoordinates && usesComplexCoordinate) {
+        throw new Error('Use either x/y or z, not both.');
+    }
+
+    const expr = usesComplexCoordinate ? lowerComplexScalar(parsed) : parsed;
 
     return { expr, relation: operator ? RELATIONS[operator]! : 'eq' };
 }

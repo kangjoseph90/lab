@@ -35,6 +35,8 @@ export type { Scope } from './evaluate.js';
 export { format } from './format.js';
 export { containsZero, evaluateInterval, interval } from './interval.js';
 export type { Interval, IntervalScope } from './interval.js';
+export { lowerComplex, lowerComplexScalar } from './lower-complex.js';
+export type { LowerComplexOptions, LoweredComplex } from './lower-complex.js';
 export { parse } from './parse.js';
 export { simplify } from './simplify.js';
 export { collectSymbols } from './symbols.js';
