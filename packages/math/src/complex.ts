@@ -1,13 +1,8 @@
-import type { Expr } from './expr.js';
 import type { NumericBackend } from './evaluate-with.js';
 
 export type Complex = { re: number; im: number };
 
 export type ComplexInput = number | Complex;
-
-export type ComplexScope = Record<string, ComplexInput>;
-
-export type CompiledComplexExpr = (...values: ComplexInput[]) => Complex;
 
 export const complex = (re: number, im = 0): Complex => ({ re, im });
 
@@ -175,95 +170,3 @@ export const complexBackend: NumericBackend<Complex> = {
         return fn(...args);
     },
 };
-
-type ComplexEvaluator = (values: Complex[]) => Complex;
-
-export function evaluateComplex(expr: Expr, scope: ComplexScope = {}): Complex {
-    switch (expr.type) {
-        case 'num':
-            return complex(expr.value);
-        case 'sym': {
-            const value = scope[expr.name];
-
-            if (value === undefined) {
-                throw new Error(`Unknown symbol: ${expr.name}`);
-            }
-
-            return toComplex(value);
-        }
-        case 'neg':
-            return complexNeg(evaluateComplex(expr.value, scope));
-        case 'add':
-            return complexAdd(...expr.terms.map((term) => evaluateComplex(term, scope)));
-        case 'mul':
-            return complexMul(...expr.factors.map((factor) => evaluateComplex(factor, scope)));
-        case 'pow':
-            return complexPow(evaluateComplex(expr.base, scope), evaluateComplex(expr.exp, scope));
-        case 'call': {
-            const fn = complexBuiltins[expr.name];
-
-            if (!fn) {
-                throw new Error(`Unknown complex function: ${expr.name}`);
-            }
-
-            return fn(...expr.args.map((arg) => evaluateComplex(arg, scope)));
-        }
-    }
-}
-
-export function compileComplex(expr: Expr, symbols: string[]): CompiledComplexExpr {
-    const symbolIndex = new Map(symbols.map((name, index) => [name, index]));
-
-    function compileNode(node: Expr): ComplexEvaluator {
-        switch (node.type) {
-            case 'num':
-                return () => complex(node.value);
-            case 'sym': {
-                const index = symbolIndex.get(node.name);
-
-                if (index === undefined) {
-                    throw new Error(`Unknown symbol: ${node.name}`);
-                }
-
-                return (values) => values[index]!;
-            }
-            case 'neg': {
-                const value = compileNode(node.value);
-                return (values) => complexNeg(value(values));
-            }
-            case 'add': {
-                const terms = node.terms.map(compileNode);
-                return (values) => complexAdd(...terms.map((term) => term(values)));
-            }
-            case 'mul': {
-                const factors = node.factors.map(compileNode);
-                return (values) => complexMul(...factors.map((factor) => factor(values)));
-            }
-            case 'pow': {
-                const base = compileNode(node.base);
-                const exp = compileNode(node.exp);
-                return (values) => complexPow(base(values), exp(values));
-            }
-            case 'call': {
-                const fn = complexBuiltins[node.name];
-
-                if (!fn) {
-                    throw new Error(`Unknown complex function: ${node.name}`);
-                }
-
-                const args = node.args.map(compileNode);
-                return (values) => fn(...args.map((arg) => arg(values)));
-            }
-        }
-    }
-
-    const compiled = compileNode(expr);
-
-    return (...values: ComplexInput[]) => {
-        if (values.length !== symbols.length) {
-            throw new Error(`Expected ${symbols.length} values, received ${values.length}`);
-        }
-
-        return compiled(values.map(toComplex));
-    };
-}

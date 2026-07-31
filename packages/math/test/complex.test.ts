@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
     add,
     call,
-    compileComplex,
     compileWith,
     complex,
     complexAbs,
@@ -12,7 +11,7 @@ import {
     complexMul,
     complexPow,
     differentiate,
-    evaluateComplex,
+    evaluateWith,
     n,
     parse,
     pow,
@@ -42,7 +41,7 @@ describe('complex expressions', () => {
         const expr = add(pow(z, n(2)), c);
 
         expectComplexClose(
-            evaluateComplex(expr, { z: complex(1, 2), c: complex(-0.5, 0.25) }),
+            evaluateWith(expr, { z: complex(1, 2), c: complex(-0.5, 0.25) }, complexBackend),
             complex(-3.5, 4.25),
         );
     });
@@ -50,14 +49,17 @@ describe('complex expressions', () => {
     it('matches real evaluation semantics when inputs are real', () => {
         const expr = parse('sin(x)^2 + cos(x)^2 + exp(0)');
 
-        expectComplexClose(evaluateComplex(expr, { x: 0.7 }), complex(2));
+        expectComplexClose(evaluateWith(expr, { x: complex(0.7) }, complexBackend), complex(2));
     });
 
     it('evaluates common holomorphic functions', () => {
-        expectComplexClose(evaluateComplex(call('sqrt', n(-1))), complex(0, 1));
-        expectComplexClose(evaluateComplex(call('ln', n(-1))), complex(0, Math.PI));
+        expectComplexClose(evaluateWith(call('sqrt', n(-1)), {}, complexBackend), complex(0, 1));
         expectComplexClose(
-            evaluateComplex(call('sin', call('sqrt', n(-1)))),
+            evaluateWith(call('ln', n(-1)), {}, complexBackend),
+            complex(0, Math.PI),
+        );
+        expectComplexClose(
+            evaluateWith(call('sin', call('sqrt', n(-1))), {}, complexBackend),
             complex(0, Math.sinh(1)),
         );
     });
@@ -68,21 +70,21 @@ describe('complex expressions', () => {
         const point = complex(1, 0.5);
 
         expectComplexClose(
-            evaluateComplex(derivative, { z: point }),
+            evaluateWith(derivative, { z: point }, complexBackend),
             complexAdd(
                 complexMul(3, complexPow(point, 2)),
-                evaluateComplex(call('cos', z), { z: point }),
+                evaluateWith(call('cos', z), { z: point }, complexBackend),
             ),
         );
     });
 
     it('compiles complex expressions without changing behavior', () => {
         const expr = parse('z^2 + c');
-        const compiled = compileComplex(expr, ['z', 'c']);
+        const compiled = compileWith(expr, ['z', 'c'], complexBackend);
         const z = complex(-0.25, 0.75);
         const c = complex(-0.8, 0.156);
 
-        expectComplexClose(compiled(z, c), evaluateComplex(expr, { z, c }));
+        expectComplexClose(compiled(z, c), evaluateWith(expr, { z, c }, complexBackend));
         expect(() => compiled(z)).toThrow('Expected 2 values');
     });
 
@@ -92,14 +94,18 @@ describe('complex expressions', () => {
         const z = complex(-0.25, 0.75);
         const c = complex(-0.8, 0.156);
 
-        expectComplexClose(compiled(z, c), evaluateComplex(expr, { z, c }));
+        expectComplexClose(compiled(z, c), evaluateWith(expr, { z, c }, complexBackend));
     });
 
     it('rejects real-only functions clearly', () => {
-        expect(() => evaluateComplex(call('atan2', s('y'), s('x')), { x: 1, y: 1 })).toThrow(
-            'Unknown complex function: atan2',
-        );
-        expect(() => compileComplex(parse('round(z)'), ['z'])).toThrow(
+        expect(() =>
+            evaluateWith(
+                call('atan2', s('y'), s('x')),
+                { x: complex(1), y: complex(1) },
+                complexBackend,
+            ),
+        ).toThrow('Unknown complex function: atan2');
+        expect(() => compileWith(parse('round(z)'), ['z'], complexBackend)(complex(1))).toThrow(
             'Unknown complex function: round',
         );
     });

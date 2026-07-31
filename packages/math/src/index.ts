@@ -1,7 +1,6 @@
 export { compile, compileInterval } from './compile.js';
 export type { CompiledExpr, CompiledInterval } from './compile.js';
 export {
-    compileComplex,
     complex,
     complexAbs,
     complexBackend,
@@ -23,11 +22,10 @@ export {
     complexSub,
     complexTan,
     complexTanh,
-    evaluateComplex,
     isComplex,
     toComplex,
 } from './complex.js';
-export type { CompiledComplexExpr, Complex, ComplexInput, ComplexScope } from './complex.js';
+export type { Complex, ComplexInput } from './complex.js';
 export { differentiate } from './differentiate.js';
 export { add, call, mul, n, neg, pow, s } from './expr.js';
 export type { Expr } from './expr.js';
