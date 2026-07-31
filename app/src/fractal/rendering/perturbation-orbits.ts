@@ -18,6 +18,7 @@ type StableTileAnchor = {
     tileIndex: number;
     pixelX: number;
     pixelY: number;
+    referenceIterations: number;
     orbit: Float32Array;
 };
 
@@ -33,12 +34,13 @@ const TILE_ANCHOR_CANDIDATES = [
     [0.75, 0.75],
 ] as const;
 
-export function createMandelbrotTileOrbits(
+export function createTileOrbits(
     viewport: FractalViewport,
     width: number,
     height: number,
     maxIterations: number,
     precision: RenderOptions['precision'],
+    fractal: RenderOptions['fractal'],
 ): TileOrbits {
     const tileSize = PERTURBATION_TILE_SIZE;
     const tilesX = Math.ceil(width / tileSize);
@@ -46,7 +48,7 @@ export function createMandelbrotTileOrbits(
     const tileCount = tilesX * tilesY;
     const orbitStride = maxIterations + 1;
     const orbit = new Float32Array(tileCount * orbitStride * 4);
-    const anchors = new Float32Array(tileCount * 2);
+    const anchors = new Float32Array(tileCount * 4);
     const stableAnchors: StableTileAnchor[] = [];
 
     for (let tileY = 0; tileY < tilesY; tileY += 1) {
@@ -65,17 +67,22 @@ export function createMandelbrotTileOrbits(
                 tileHeight,
                 maxIterations,
                 precision,
+                fractal,
             );
 
             if (!candidate) {
-                anchors[tileIndex * 2] = -1;
-                anchors[tileIndex * 2 + 1] = -1;
+                anchors[tileIndex * 4] = -1;
+                anchors[tileIndex * 4 + 1] = -1;
+                anchors[tileIndex * 4 + 2] = 0;
+                anchors[tileIndex * 4 + 3] = 0;
                 continue;
             }
 
             orbit.set(candidate.orbit, base);
-            anchors[tileIndex * 2] = candidate.pixelX;
-            anchors[tileIndex * 2 + 1] = candidate.pixelY;
+            anchors[tileIndex * 4] = candidate.pixelX;
+            anchors[tileIndex * 4 + 1] = candidate.pixelY;
+            anchors[tileIndex * 4 + 2] = candidate.referenceIterations;
+            anchors[tileIndex * 4 + 3] = 0;
             stableAnchors.push({ tileIndex, ...candidate });
         }
     }
@@ -100,13 +107,15 @@ function fillMissingTileOrbits(
             const tileIndex = tileY * tilesX + tileX;
             const base = tileIndex * orbitStride * 4;
 
-            if ((anchors[tileIndex * 2] ?? -1) >= 0) continue;
+            if ((anchors[tileIndex * 4] ?? -1) >= 0) continue;
 
             const nearest = findNearestStableAnchor(tileX, tileY, tilesX, stableAnchors);
 
             orbit.set(nearest.orbit, base);
-            anchors[tileIndex * 2] = nearest.pixelX;
-            anchors[tileIndex * 2 + 1] = nearest.pixelY;
+            anchors[tileIndex * 4] = nearest.pixelX;
+            anchors[tileIndex * 4 + 1] = nearest.pixelY;
+            anchors[tileIndex * 4 + 2] = nearest.referenceIterations;
+            anchors[tileIndex * 4 + 3] = 0;
         }
     }
 }
@@ -149,44 +158,58 @@ function findStableTileAnchor(
     tileHeight: number,
     maxIterations: number,
     precision: RenderOptions['precision'],
-): { pixelX: number; pixelY: number; orbit: Float32Array } | undefined {
+    fractal: RenderOptions['fractal'],
+):
+    | { pixelX: number; pixelY: number; referenceIterations: number; orbit: Float32Array }
+    | undefined {
     for (const [offsetX, offsetY] of TILE_ANCHOR_CANDIDATES) {
         const pixelX = tileLeft + Math.min(tileWidth - 0.5, Math.max(0.5, tileWidth * offsetX));
         const pixelY = tileTop + Math.min(tileHeight - 0.5, Math.max(0.5, tileHeight * offsetY));
-        const orbit =
+        const pointX = coordinateXDD(viewport, pixelX, width);
+        const pointY = coordinateYDD(viewport, pixelY, height);
+        const candidate =
             precision === 'double-double'
-                ? createStableMandelbrotOrbitDD(
-                      mandelbrotCoordinateXDD(viewport, pixelX, width),
-                      mandelbrotCoordinateYDD(viewport, pixelY, height),
+                ? createTileOrbitDD(pointX, pointY, maxIterations, fractal)
+                : createTileOrbitNumber(
+                      ddToNumber(pointX),
+                      ddToNumber(pointY),
                       maxIterations,
-                  )
-                : createStableMandelbrotOrbitNumber(
-                      ddToNumber(mandelbrotCoordinateXDD(viewport, pixelX, width)),
-                      ddToNumber(mandelbrotCoordinateYDD(viewport, pixelY, height)),
-                      maxIterations,
+                      fractal,
                   );
 
-        if (orbit) return { pixelX, pixelY, orbit };
+        if (candidate) return { pixelX, pixelY, ...candidate };
     }
 
     return undefined;
 }
 
-function createStableMandelbrotOrbitNumber(
-    cx: number,
-    cy: number,
+function createTileOrbitNumber(
+    x: number,
+    y: number,
     maxIterations: number,
-): Float32Array | undefined {
+    fractal: RenderOptions['fractal'],
+): { orbit: Float32Array; referenceIterations: number } | undefined {
     const orbit = new Float32Array((maxIterations + 1) * 4);
-    let zx = 0;
-    let zy = 0;
+    let zx = fractal.type === 'julia' ? x : 0;
+    let zy = fractal.type === 'julia' ? y : 0;
+    const cx = fractal.type === 'julia' ? fractal.c.re : x;
+    const cy = fractal.type === 'julia' ? fractal.c.im : y;
 
     for (let i = 0; i <= maxIterations; i += 1) {
-        if (!Number.isFinite(zx) || !Number.isFinite(zy) || zx * zx + zy * zy > 4) {
+        if (!Number.isFinite(zx) || !Number.isFinite(zy)) {
             return undefined;
         }
 
         writeNumberOrbitPoint(orbit, i, zx, zy);
+
+        if (zx * zx + zy * zy > 4) {
+            if (fractal.type === 'julia') {
+                fillNumberOrbitTail(orbit, i + 1, maxIterations, zx, zy);
+                return { orbit, referenceIterations: i };
+            }
+
+            return undefined;
+        }
 
         const zx2 = zx * zx;
         const zy2 = zy * zy;
@@ -197,31 +220,39 @@ function createStableMandelbrotOrbitNumber(
         zy = nextY;
     }
 
-    return orbit;
+    return { orbit, referenceIterations: maxIterations };
 }
 
-function createStableMandelbrotOrbitDD(
-    cx: DoubleDouble,
-    cy: DoubleDouble,
+function createTileOrbitDD(
+    x: DoubleDouble,
+    y: DoubleDouble,
     maxIterations: number,
-): Float32Array | undefined {
+    fractal: RenderOptions['fractal'],
+): { orbit: Float32Array; referenceIterations: number } | undefined {
     const orbit = new Float32Array((maxIterations + 1) * 4);
-    let zx = dd(0);
-    let zy = dd(0);
+    let zx = fractal.type === 'julia' ? x : dd(0);
+    let zy = fractal.type === 'julia' ? y : dd(0);
+    const cx = fractal.type === 'julia' ? dd(fractal.c.re) : x;
+    const cy = fractal.type === 'julia' ? dd(fractal.c.im) : y;
 
     for (let i = 0; i <= maxIterations; i += 1) {
         const zxValue = zx.hi + zx.lo;
         const zyValue = zy.hi + zy.lo;
 
-        if (
-            !Number.isFinite(zxValue) ||
-            !Number.isFinite(zyValue) ||
-            zxValue * zxValue + zyValue * zyValue > 4
-        ) {
+        if (!Number.isFinite(zxValue) || !Number.isFinite(zyValue)) {
             return undefined;
         }
 
         writeDoubleDoubleOrbitPoint(orbit, i, zx, zy);
+
+        if (zxValue * zxValue + zyValue * zyValue > 4) {
+            if (fractal.type === 'julia') {
+                fillDoubleDoubleOrbitTail(orbit, i + 1, maxIterations, zx, zy);
+                return { orbit, referenceIterations: i };
+            }
+
+            return undefined;
+        }
 
         const zx2 = ddMul(zx, zx);
         const zy2 = ddMul(zy, zy);
@@ -232,22 +263,14 @@ function createStableMandelbrotOrbitDD(
         zy = nextY;
     }
 
-    return orbit;
+    return { orbit, referenceIterations: maxIterations };
 }
 
-function mandelbrotCoordinateXDD(
-    viewport: FractalViewport,
-    pixel: number,
-    width: number,
-): DoubleDouble {
+function coordinateXDD(viewport: FractalViewport, pixel: number, width: number): DoubleDouble {
     return ddAdd(viewport.centerX, ddMul(dd(pixel - width / 2), viewport.unitsPerPixel));
 }
 
-function mandelbrotCoordinateYDD(
-    viewport: FractalViewport,
-    pixel: number,
-    height: number,
-): DoubleDouble {
+function coordinateYDD(viewport: FractalViewport, pixel: number, height: number): DoubleDouble {
     return ddSub(viewport.centerY, ddMul(dd(pixel - height / 2), viewport.unitsPerPixel));
 }
 
@@ -266,6 +289,30 @@ function writeDoubleDoubleOrbitPoint(
     const reParts = splitDoubleDoubleForGpu(re);
     const imParts = splitDoubleDoubleForGpu(im);
     writeOrbitPoint(orbit, index, reParts.hi, imParts.hi, reParts.lo, imParts.lo);
+}
+
+function fillNumberOrbitTail(
+    orbit: Float32Array,
+    start: number,
+    maxIterations: number,
+    re: number,
+    im: number,
+): void {
+    for (let i = start; i <= maxIterations; i += 1) {
+        writeNumberOrbitPoint(orbit, i, re, im);
+    }
+}
+
+function fillDoubleDoubleOrbitTail(
+    orbit: Float32Array,
+    start: number,
+    maxIterations: number,
+    re: DoubleDouble,
+    im: DoubleDouble,
+): void {
+    for (let i = start; i <= maxIterations; i += 1) {
+        writeDoubleDoubleOrbitPoint(orbit, i, re, im);
+    }
 }
 
 function writeOrbitPoint(

@@ -248,7 +248,7 @@ struct Params {
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read_write> pixels: array<u32>;
 @group(0) @binding(2) var<storage, read> orbit: array<vec4f>;
-@group(0) @binding(3) var<storage, read> anchors: array<vec2f>;
+@group(0) @binding(3) var<storage, read> anchors: array<vec4f>;
 
 struct DD {
     hi: f32,
@@ -362,6 +362,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     }
 
     let max_iterations = u32(params.size.z);
+    let fractal_type = u32(params.size.w);
     let pixel = id.y * width + id.x;
     let tile_size = u32(params.perturbation.x);
     let tiles_x = u32(params.perturbation.y);
@@ -371,12 +372,22 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let orbit_stride = max_iterations + 1u;
     let orbit_base = tile_index * orbit_stride;
     let anchor = anchors[tile_index];
+    let reference_iterations = u32(anchor.z);
 
     let units_per_pixel = DD(params.view.z, params.view_lo.z);
-    let dcx = dd_mul(dd(f32(id.x) - anchor.x), units_per_pixel);
-    let dcy = dd_mul(dd(anchor.y - f32(id.y)), units_per_pixel);
+    let delta_x = dd_mul(dd(f32(id.x) - anchor.x), units_per_pixel);
+    let delta_y = dd_mul(dd(anchor.y - f32(id.y)), units_per_pixel);
+    var dcx = delta_x;
+    var dcy = delta_y;
     var dzx = dd(0.0);
     var dzy = dd(0.0);
+
+    if (fractal_type == 1u) {
+        dcx = dd(0.0);
+        dcy = dd(0.0);
+        dzx = delta_x;
+        dzy = delta_y;
+    }
 
     for (var iterations = 0u; iterations < max_iterations; iterations = iterations + 1u) {
         let orbit_index = orbit_base + iterations;
@@ -387,6 +398,47 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
         if (dd_to_f32(dd_add(zx2, zy2)) > 4.0) {
             pixels[pixel] = colorize(1.0, smooth_escape(zx, zy, iterations));
+            return;
+        }
+
+        if (fractal_type == 1u && iterations >= reference_iterations) {
+            var direct_zx = zx;
+            var direct_zy = zy;
+            let cx = DD(params.julia.x, params.julia.z);
+            let cy = DD(params.julia.y, params.julia.w);
+
+            for (
+                var direct_iterations = iterations;
+                direct_iterations < max_iterations;
+                direct_iterations = direct_iterations + 1u
+            ) {
+                let direct_zx2 = dd_sqr(direct_zx);
+                let direct_zy2 = dd_sqr(direct_zy);
+
+                if (dd_to_f32(dd_add(direct_zx2, direct_zy2)) > 4.0) {
+                    pixels[pixel] = colorize(
+                        1.0,
+                        smooth_escape(direct_zx, direct_zy, direct_iterations),
+                    );
+                    return;
+                }
+
+                direct_zy = dd_add(dd_mul(dd(2.0), dd_mul(direct_zx, direct_zy)), cy);
+                direct_zx = dd_add(dd_sub(direct_zx2, direct_zy2), cx);
+            }
+
+            let direct_zx2 = dd_sqr(direct_zx);
+            let direct_zy2 = dd_sqr(direct_zy);
+
+            if (dd_to_f32(dd_add(direct_zx2, direct_zy2)) > 4.0) {
+                pixels[pixel] = colorize(
+                    1.0,
+                    smooth_escape(direct_zx, direct_zy, max_iterations),
+                );
+                return;
+            }
+
+            pixels[pixel] = colorize(0.0, 0.0);
             return;
         }
 

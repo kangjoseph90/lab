@@ -464,14 +464,14 @@ function updateFractalControls(): void {
     const precisionLabel = precision === 'double-double' ? 'double-double' : 'number';
     const backend = readFractalBackend();
     const backendLabel = backend === 'gpu' ? 'GPU' : 'CPU';
-    const canPerturb = !isJulia && backend === 'gpu';
+    const canPerturb = backend === 'gpu';
     const perturbationLabel = canPerturb && readFractalPerturbation() ? ', perturbation' : '';
 
     juliaFields.classList.toggle('is-hidden', !isJulia);
     fractalPerturbationInput.disabled = !canPerturb;
     if (!canPerturb) fractalPerturbationInput.checked = false;
     fractalName.textContent = isJulia
-        ? `Julia set, c = ${cRe.toFixed(3)} + ${cIm.toFixed(3)}i, ${precisionLabel}, ${backendLabel}`
+        ? `Julia set, c = ${cRe.toFixed(3)} + ${cIm.toFixed(3)}i, ${precisionLabel}, ${backendLabel}${perturbationLabel}`
         : `Mandelbrot set, ${precisionLabel}, ${backendLabel}${perturbationLabel}`;
     projectSubtitle.textContent =
         activeMode === 'graph'

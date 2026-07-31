@@ -5,7 +5,7 @@ import {
     PERTURBATION_SHADER,
     WORKGROUP_SIZE,
 } from './gpu-shaders';
-import { createMandelbrotTileOrbits } from './perturbation-orbits';
+import { createTileOrbits } from './perturbation-orbits';
 import { splitDoubleDoubleForGpu, splitFloat } from './gpu-precision';
 import type { RenderOptions } from './renderer';
 
@@ -32,14 +32,14 @@ export class FractalGpuRenderer {
         const device = await this.#getDevice();
         const width = this.#canvas.width;
         const height = this.#canvas.height;
-        const canUsePerturbation = options.perturbation && options.fractal.type === 'mandelbrot';
-        const perturbation = canUsePerturbation
-            ? createMandelbrotTileOrbits(
+        const perturbation = options.perturbation
+            ? createTileOrbits(
                   viewport,
                   width,
                   height,
                   options.maxIterations,
                   options.precision,
+                  options.fractal,
               )
             : undefined;
         const activePerturbation =
