@@ -1,7 +1,6 @@
 /// <reference lib="webworker" />
 
-import { complex } from '@lab/math';
-import { iterateComplexFractal, julia, mandelbrot } from '@lab/fractal';
+import { iterateJuliaPoint, iterateMandelbrotPoint } from '@lab/fractal';
 import type { FractalRenderWorkerRequest, FractalRenderWorkerResponse } from './render-protocol';
 
 const worker = self as DedicatedWorkerGlobalScope;
@@ -23,10 +22,6 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
     try {
         const { id, width, height, viewport, options } = request;
         const chunkHeight = 24;
-        const fractal =
-            options.fractal.type === 'mandelbrot'
-                ? mandelbrot
-                : julia(complex(options.fractal.c.re, options.fractal.c.im));
 
         for (let startY = 0; startY < height; startY += chunkHeight) {
             if (id !== activeRenderId) return;
@@ -39,9 +34,16 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
 
                 for (let px = 0; px < width; px += 1) {
                     const x = viewport.centerX + (px - width / 2) * viewport.unitsPerPixel;
-                    const result = iterateComplexFractal(fractal, complex(x, y), {
-                        maxIterations: options.maxIterations,
-                    });
+                    const result =
+                        options.fractal.type === 'mandelbrot'
+                            ? iterateMandelbrotPoint(x, y, options.maxIterations)
+                            : iterateJuliaPoint(
+                                  x,
+                                  y,
+                                  options.fractal.c.re,
+                                  options.fractal.c.im,
+                                  options.maxIterations,
+                              );
                     const offset = ((py - startY) * width + px) * 4;
                     const [r, g, b] = colorize(result.status, result.smoothIteration);
 

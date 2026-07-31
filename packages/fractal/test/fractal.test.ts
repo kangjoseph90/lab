@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { complex } from '@lab/math';
-import { iterateComplexFractal, julia, mandelbrot, mandelbrotStep } from '../src/index.js';
+import {
+    iterateComplexFractal,
+    iterateJuliaPoint,
+    iterateMandelbrotPoint,
+    julia,
+    mandelbrot,
+    mandelbrotStep,
+} from '../src/index.js';
 
 describe('complex fractals', () => {
     it('keeps points in the main Mandelbrot body bounded for the requested iteration budget', () => {
@@ -40,5 +47,24 @@ describe('complex fractals', () => {
         expect(() => iterateComplexFractal(mandelbrot, complex(0), { maxIterations: 1.5 })).toThrow(
             'maxIterations must be a positive integer',
         );
+    });
+
+    it('matches direct Mandelbrot escape timing in the raw loop', () => {
+        const direct = iterateComplexFractal(mandelbrot, complex(2), { maxIterations: 100 });
+        const raw = iterateMandelbrotPoint(2, 0, 100);
+
+        expect(raw.status).toBe(direct.status);
+        expect(raw.iterations).toBe(direct.iterations);
+        expect(raw.smoothIteration).toBeCloseTo(direct.smoothIteration!);
+    });
+
+    it('matches direct Julia escape timing in the raw loop', () => {
+        const parameter = complex(-0.8, 0.156);
+        const point = complex(1.5, 0.2);
+        const direct = iterateComplexFractal(julia(parameter), point, { maxIterations: 100 });
+        const raw = iterateJuliaPoint(point.re, point.im, parameter.re, parameter.im, 100);
+
+        expect(raw.status).toBe(direct.status);
+        expect(raw.iterations).toBe(direct.iterations);
     });
 });
