@@ -7,6 +7,7 @@ export type RenderOptions = {
     maxIterations: number;
     precision: FractalPrecision;
     backend: FractalBackend;
+    perturbation: boolean;
 };
 
 export type FractalPrecision = 'number' | 'double-double';
@@ -70,9 +71,17 @@ export class FractalRenderer {
         if (options.backend === 'gpu') {
             return this.#gpu
                 .render(viewport, options, () => id === this.#renderId)
-                .catch(() => {
+                .catch((cause) => {
                     if (id !== this.#renderId) return;
-                    return this.#renderCpu(id, viewport, options);
+                    if (options.perturbation) {
+                        return this.#gpu.render(
+                            viewport,
+                            { ...options, perturbation: false },
+                            () => id === this.#renderId,
+                        );
+                    }
+
+                    throw cause;
                 });
         }
 
