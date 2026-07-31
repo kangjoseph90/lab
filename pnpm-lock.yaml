@@ -28,6 +28,12 @@ importers:
         specifier: ^6.3.5
         version: 6.4.3
 
+  packages/fractal:
+    dependencies:
+      '@lab/math':
+        specifier: workspace:*
+        version: link:../math
+
   packages/math: {}
 
 packages:
