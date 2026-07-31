@@ -360,11 +360,10 @@ function updateFractalControls(): void {
 
     const precision = readFractalPrecision();
     const precisionLabel = precision === 'double-double' ? 'double-double' : 'number';
-    const backend = precision === 'double-double' ? 'cpu' : readFractalBackend();
+    const backend = readFractalBackend();
     const backendLabel = backend === 'gpu' ? 'GPU' : 'CPU';
 
     juliaFields.classList.toggle('is-hidden', !isJulia);
-    fractalBackendInput.disabled = precision === 'double-double';
     fractalName.textContent = isJulia
         ? `Julia set, c = ${cRe.toFixed(3)} + ${cIm.toFixed(3)}i, ${precisionLabel}, ${backendLabel}`
         : `Mandelbrot set, ${precisionLabel}, ${backendLabel}`;

@@ -67,7 +67,7 @@ export class FractalRenderer {
         this.#pending?.resolve();
         const id = ++this.#renderId;
 
-        if (options.backend === 'gpu' && options.precision === 'number') {
+        if (options.backend === 'gpu') {
             return this.#gpu
                 .render(viewport, options, () => id === this.#renderId)
                 .catch(() => {
