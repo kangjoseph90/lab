@@ -1,13 +1,16 @@
 import type { Viewport } from '../../graph/viewport';
+import { FractalGpuRenderer } from './gpu-renderer';
 import type { FractalRenderWorkerRequest, FractalRenderWorkerResponse } from './render-protocol';
 
 export type RenderOptions = {
     fractal: FractalConfig;
     maxIterations: number;
     precision: FractalPrecision;
+    backend: FractalBackend;
 };
 
 export type FractalPrecision = 'number' | 'double-double';
+export type FractalBackend = 'cpu' | 'gpu';
 
 export type FractalConfig =
     | { type: 'mandelbrot' }
@@ -16,6 +19,7 @@ export type FractalConfig =
 export class FractalRenderer {
     readonly #canvas: HTMLCanvasElement;
     readonly #context: CanvasRenderingContext2D;
+    readonly #gpu: FractalGpuRenderer;
     readonly #preview = document.createElement('canvas');
     readonly #previewContext: CanvasRenderingContext2D;
     readonly #worker = new Worker(new URL('./fractal.worker.ts', import.meta.url), {
@@ -33,6 +37,7 @@ export class FractalRenderer {
         this.#canvas = canvas;
         this.#context = context;
         this.#previewContext = previewContext;
+        this.#gpu = new FractalGpuRenderer(canvas, context);
         this.#worker.onmessage = (event: MessageEvent<FractalRenderWorkerResponse>) =>
             this.#onMessage(event.data);
         this.#worker.onerror = (event) => this.#fail(new Error(event.message));
@@ -62,6 +67,19 @@ export class FractalRenderer {
         this.#pending?.resolve();
         const id = ++this.#renderId;
 
+        if (options.backend === 'gpu' && options.precision === 'number') {
+            return this.#gpu
+                .render(viewport, options, () => id === this.#renderId)
+                .catch(() => {
+                    if (id !== this.#renderId) return;
+                    return this.#renderCpu(id, viewport, options);
+                });
+        }
+
+        return this.#renderCpu(id, viewport, options);
+    }
+
+    #renderCpu(id: number, viewport: Viewport, options: RenderOptions): Promise<void> {
         this.#worker.postMessage({
             type: 'render',
             id,

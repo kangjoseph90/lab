@@ -56,6 +56,13 @@ app.innerHTML = `
             <option value="double-double">Double-double</option>
           </select>
         </div>
+        <div class="field">
+          <label for="fractal-backend">Backend</label>
+          <select id="fractal-backend" name="fractal-backend">
+            <option value="gpu">GPU</option>
+            <option value="cpu">CPU</option>
+          </select>
+        </div>
         <div class="julia-fields is-hidden" id="julia-fields">
           <div class="field">
             <label for="julia-real">Julia c real</label>
@@ -96,6 +103,7 @@ const graphModeButton = requireElement<HTMLButtonElement>('#mode-graph');
 const fractalModeButton = requireElement<HTMLButtonElement>('#mode-fractal');
 const fractalTypeInput = requireElement<HTMLSelectElement>('#fractal-type');
 const fractalPrecisionInput = requireElement<HTMLSelectElement>('#fractal-precision');
+const fractalBackendInput = requireElement<HTMLSelectElement>('#fractal-backend');
 const juliaFields = requireElement<HTMLElement>('#julia-fields');
 const juliaRealInput = requireElement<HTMLInputElement>('#julia-real');
 const juliaImagInput = requireElement<HTMLInputElement>('#julia-imag');
@@ -137,6 +145,7 @@ function scheduleRender(): void {
                   fractal: readFractalConfig(),
                   maxIterations: readMaxIterations(),
                   precision: readFractalPrecision(),
+                  backend: readFractalBackend(),
               });
 
     void render
@@ -253,7 +262,7 @@ fractalTypeInput.addEventListener('change', () => {
         scheduleRender();
     }
 });
-[fractalPrecisionInput].forEach((control) => {
+[fractalPrecisionInput, fractalBackendInput].forEach((control) => {
     control.addEventListener('change', () => {
         updateFractalControls();
         if (activeMode === 'fractal') scheduleRender();
@@ -326,6 +335,10 @@ function readFractalPrecision() {
     return fractalPrecisionInput.value === 'double-double' ? 'double-double' : 'number';
 }
 
+function readFractalBackend() {
+    return fractalBackendInput.value === 'cpu' ? 'cpu' : 'gpu';
+}
+
 function readNumber(inputElement: HTMLInputElement, fallback: number): number {
     const value = Number.parseFloat(inputElement.value);
     return Number.isFinite(value) ? value : fallback;
@@ -347,11 +360,14 @@ function updateFractalControls(): void {
 
     const precision = readFractalPrecision();
     const precisionLabel = precision === 'double-double' ? 'double-double' : 'number';
+    const backend = precision === 'double-double' ? 'cpu' : readFractalBackend();
+    const backendLabel = backend === 'gpu' ? 'GPU' : 'CPU';
 
     juliaFields.classList.toggle('is-hidden', !isJulia);
+    fractalBackendInput.disabled = precision === 'double-double';
     fractalName.textContent = isJulia
-        ? `Julia set, c = ${cRe.toFixed(3)} + ${cIm.toFixed(3)}i, ${precisionLabel} precision`
-        : `Mandelbrot set, ${precisionLabel} precision`;
+        ? `Julia set, c = ${cRe.toFixed(3)} + ${cIm.toFixed(3)}i, ${precisionLabel}, ${backendLabel}`
+        : `Mandelbrot set, ${precisionLabel}, ${backendLabel}`;
     projectSubtitle.textContent =
         activeMode === 'graph'
             ? 'Implicit calculator'
