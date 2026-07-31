@@ -8,6 +8,9 @@ export default defineConfig({
                 new URL('../packages/fractal/src/index.ts', import.meta.url),
             ),
             '@lab/math': fileURLToPath(new URL('../packages/math/src/index.ts', import.meta.url)),
+            '@lab/precision': fileURLToPath(
+                new URL('../packages/precision/src/index.ts', import.meta.url),
+            ),
         },
     },
 });

@@ -184,6 +184,11 @@ select {
     border-color: #1369c4;
     box-shadow: 0 0 0 3px #dceaf8;
 }
+.field select:disabled {
+    color: #8a8e91;
+    background: #ecedea;
+    cursor: not-allowed;
+}
 .julia-fields {
     display: grid;
     gap: 14px;

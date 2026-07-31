@@ -4,7 +4,8 @@
         "baseUrl": ".",
         "paths": {
             "@lab/fractal": ["../packages/fractal/src/index.ts"],
-            "@lab/math": ["../packages/math/src/index.ts"]
+            "@lab/math": ["../packages/math/src/index.ts"],
+            "@lab/precision": ["../packages/precision/src/index.ts"]
         },
         "types": ["vite/client"],
         "noEmit": true

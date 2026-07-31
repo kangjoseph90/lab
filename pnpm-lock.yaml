@@ -26,6 +26,9 @@ importers:
       '@lab/math':
         specifier: workspace:*
         version: link:../packages/math
+      '@lab/precision':
+        specifier: workspace:*
+        version: link:../packages/precision
     devDependencies:
       vite:
         specifier: ^6.3.5
@@ -36,6 +39,9 @@ importers:
       '@lab/math':
         specifier: workspace:*
         version: link:../math
+      '@lab/precision':
+        specifier: workspace:*
+        version: link:../precision
 
   packages/math: {}
 

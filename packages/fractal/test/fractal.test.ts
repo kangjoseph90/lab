@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { complex } from '@lab/math';
+import { dd, ddToNumber } from '@lab/precision';
 import {
+    ddComplex,
     iterateComplexFractal,
     iterateJuliaPoint,
+    iterateJuliaPointDD,
     iterateMandelbrotPoint,
+    iterateMandelbrotPointDD,
     julia,
     mandelbrot,
+    mandelbrotCoordinateDD,
     mandelbrotStep,
 } from '../src/index.js';
 
@@ -66,5 +71,36 @@ describe('complex fractals', () => {
 
         expect(raw.status).toBe(direct.status);
         expect(raw.iterations).toBe(direct.iterations);
+    });
+
+    it('matches number Mandelbrot escape timing in the double-double raw loop', () => {
+        const raw = iterateMandelbrotPoint(-0.75, 0.1, 100);
+        const highPrecision = iterateMandelbrotPointDD(ddComplex(-0.75, 0.1), 100);
+
+        expect(highPrecision.status).toBe(raw.status);
+        expect(highPrecision.iterations).toBe(raw.iterations);
+    });
+
+    it('matches number Julia escape timing in the double-double raw loop', () => {
+        const parameter = complex(-0.8, 0.156);
+        const point = complex(1.5, 0.2);
+        const raw = iterateJuliaPoint(point.re, point.im, parameter.re, parameter.im, 100);
+        const highPrecision = iterateJuliaPointDD(
+            ddComplex(point.re, point.im),
+            ddComplex(parameter.re, parameter.im),
+            100,
+        );
+
+        expect(highPrecision.status).toBe(raw.status);
+        expect(highPrecision.iterations).toBe(raw.iterations);
+    });
+
+    it('computes Mandelbrot pixel coordinates in double-double precision', () => {
+        const center = dd(1e16);
+        const unitsPerPixel = dd(0.25);
+        const coordinate = mandelbrotCoordinateDD(center, 6, 4, unitsPerPixel);
+
+        expect(ddToNumber(coordinate)).toBe(10000000000000000);
+        expect(coordinate.lo).toBe(1);
     });
 });

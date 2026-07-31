@@ -4,7 +4,10 @@ import type { FractalRenderWorkerRequest, FractalRenderWorkerResponse } from './
 export type RenderOptions = {
     fractal: FractalConfig;
     maxIterations: number;
+    precision: FractalPrecision;
 };
+
+export type FractalPrecision = 'number' | 'double-double';
 
 export type FractalConfig =
     | { type: 'mandelbrot' }

@@ -49,6 +49,13 @@ app.innerHTML = `
             <option value="julia">Julia</option>
           </select>
         </div>
+        <div class="field">
+          <label for="fractal-precision">Precision</label>
+          <select id="fractal-precision" name="fractal-precision">
+            <option value="number">Number</option>
+            <option value="double-double">Double-double</option>
+          </select>
+        </div>
         <div class="julia-fields is-hidden" id="julia-fields">
           <div class="field">
             <label for="julia-real">Julia c real</label>
@@ -88,6 +95,7 @@ const fractalPanel = requireElement<HTMLElement>('#fractal-panel');
 const graphModeButton = requireElement<HTMLButtonElement>('#mode-graph');
 const fractalModeButton = requireElement<HTMLButtonElement>('#mode-fractal');
 const fractalTypeInput = requireElement<HTMLSelectElement>('#fractal-type');
+const fractalPrecisionInput = requireElement<HTMLSelectElement>('#fractal-precision');
 const juliaFields = requireElement<HTMLElement>('#julia-fields');
 const juliaRealInput = requireElement<HTMLInputElement>('#julia-real');
 const juliaImagInput = requireElement<HTMLInputElement>('#julia-imag');
@@ -128,6 +136,7 @@ function scheduleRender(): void {
             : fractalRenderer.render(viewport, {
                   fractal: readFractalConfig(),
                   maxIterations: readMaxIterations(),
+                  precision: readFractalPrecision(),
               });
 
     void render
@@ -244,6 +253,12 @@ fractalTypeInput.addEventListener('change', () => {
         scheduleRender();
     }
 });
+[fractalPrecisionInput].forEach((control) => {
+    control.addEventListener('change', () => {
+        updateFractalControls();
+        if (activeMode === 'fractal') scheduleRender();
+    });
+});
 [juliaRealInput, juliaImagInput, maxIterationsInput].forEach((control) => {
     control.addEventListener('input', () => {
         updateFractalControls();
@@ -307,6 +322,10 @@ function readFractalConfig() {
     return { type: 'mandelbrot' as const };
 }
 
+function readFractalPrecision() {
+    return fractalPrecisionInput.value === 'double-double' ? 'double-double' : 'number';
+}
+
 function readNumber(inputElement: HTMLInputElement, fallback: number): number {
     const value = Number.parseFloat(inputElement.value);
     return Number.isFinite(value) ? value : fallback;
@@ -326,10 +345,13 @@ function updateFractalControls(): void {
     const cRe = readNumber(juliaRealInput, -0.8);
     const cIm = readNumber(juliaImagInput, 0.156);
 
+    const precision = readFractalPrecision();
+    const precisionLabel = precision === 'double-double' ? 'double-double' : 'number';
+
     juliaFields.classList.toggle('is-hidden', !isJulia);
     fractalName.textContent = isJulia
-        ? `Julia set, c = ${cRe.toFixed(3)} + ${cIm.toFixed(3)}i`
-        : 'Mandelbrot set';
+        ? `Julia set, c = ${cRe.toFixed(3)} + ${cIm.toFixed(3)}i, ${precisionLabel} precision`
+        : `Mandelbrot set, ${precisionLabel} precision`;
     projectSubtitle.textContent =
         activeMode === 'graph'
             ? 'Implicit calculator'

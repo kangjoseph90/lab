@@ -4,3 +4,10 @@ export { julia } from './julia.js';
 export { mandelbrot, mandelbrotStep } from './mandelbrot.js';
 export { iterateJuliaPoint, iterateMandelbrotPoint, smoothEscapeTimeRaw } from './raw.js';
 export type { RawOrbitResult } from './raw.js';
+export {
+    ddComplex,
+    iterateJuliaPointDD,
+    iterateMandelbrotPointDD,
+    mandelbrotCoordinateDD,
+} from './raw-dd.js';
+export type { DoubleDoubleComplex } from './raw-dd.js';

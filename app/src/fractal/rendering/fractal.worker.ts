@@ -1,6 +1,14 @@
 /// <reference lib="webworker" />
 
-import { iterateJuliaPoint, iterateMandelbrotPoint } from '@lab/fractal';
+import { dd, ddAdd, ddMul, ddSub } from '@lab/precision';
+import type { DoubleDouble } from '@lab/precision';
+import {
+    ddComplex,
+    iterateJuliaPoint,
+    iterateJuliaPointDD,
+    iterateMandelbrotPoint,
+    iterateMandelbrotPointDD,
+} from '@lab/fractal';
 import type { FractalRenderWorkerRequest, FractalRenderWorkerResponse } from './render-protocol';
 
 const worker = self as DedicatedWorkerGlobalScope;
@@ -22,6 +30,11 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
     try {
         const { id, width, height, viewport, options } = request;
         const chunkHeight = 24;
+        const useDoubleDouble = options.precision === 'double-double';
+        const centerX = useDoubleDouble ? dd(viewport.centerX) : undefined;
+        const centerY = useDoubleDouble ? dd(viewport.centerY) : undefined;
+        const unitsPerPixel = useDoubleDouble ? dd(viewport.unitsPerPixel) : undefined;
+        const halfWidthOffset = useDoubleDouble ? ddMul(dd(width / 2), unitsPerPixel!) : undefined;
 
         for (let startY = 0; startY < height; startY += chunkHeight) {
             if (id !== activeRenderId) return;
@@ -31,19 +44,17 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
 
             for (let py = startY; py < startY + rows; py += 1) {
                 const y = viewport.centerY - (py - height / 2) * viewport.unitsPerPixel;
+                const yDD = useDoubleDouble
+                    ? ddSub(centerY!, ddMul(dd(py - height / 2), unitsPerPixel!))
+                    : undefined;
+                let x = viewport.centerX - (width / 2) * viewport.unitsPerPixel;
+                let xDD = useDoubleDouble ? ddSub(centerX!, halfWidthOffset!) : undefined;
 
                 for (let px = 0; px < width; px += 1) {
-                    const x = viewport.centerX + (px - width / 2) * viewport.unitsPerPixel;
                     const result =
-                        options.fractal.type === 'mandelbrot'
-                            ? iterateMandelbrotPoint(x, y, options.maxIterations)
-                            : iterateJuliaPoint(
-                                  x,
-                                  y,
-                                  options.fractal.c.re,
-                                  options.fractal.c.im,
-                                  options.maxIterations,
-                              );
+                        useDoubleDouble && xDD && yDD
+                            ? renderPointDoubleDouble(options, xDD, yDD)
+                            : renderPointNumber(options, x, y);
                     const offset = ((py - startY) * width + px) * 4;
                     const [r, g, b] = colorize(result.status, result.smoothIteration);
 
@@ -51,6 +62,9 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
                     pixels[offset + 1] = g;
                     pixels[offset + 2] = b;
                     pixels[offset + 3] = 255;
+
+                    x += viewport.unitsPerPixel;
+                    if (xDD && unitsPerPixel) xDD = ddAdd(xDD, unitsPerPixel);
                 }
             }
 
@@ -68,6 +82,40 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
             message: cause instanceof Error ? cause.message : String(cause),
         });
     }
+}
+
+function renderPointNumber(
+    options: Extract<FractalRenderWorkerRequest, { type: 'render' }>['options'],
+    x: number,
+    y: number,
+) {
+    if (options.fractal.type === 'mandelbrot') {
+        return iterateMandelbrotPoint(x, y, options.maxIterations);
+    }
+
+    return iterateJuliaPoint(
+        x,
+        y,
+        options.fractal.c.re,
+        options.fractal.c.im,
+        options.maxIterations,
+    );
+}
+
+function renderPointDoubleDouble(
+    options: Extract<FractalRenderWorkerRequest, { type: 'render' }>['options'],
+    x: DoubleDouble,
+    y: DoubleDouble,
+) {
+    if (options.fractal.type === 'mandelbrot') {
+        return iterateMandelbrotPointDD(ddComplex(x, y), options.maxIterations);
+    }
+
+    return iterateJuliaPointDD(
+        ddComplex(x, y),
+        ddComplex(options.fractal.c.re, options.fractal.c.im),
+        options.maxIterations,
+    );
 }
 
 function colorize(status: 'escaped' | 'bounded', smoothIteration: number | undefined) {

@@ -17,6 +17,7 @@
         "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit"
     },
     "dependencies": {
-        "@lab/math": "workspace:*"
+        "@lab/math": "workspace:*",
+        "@lab/precision": "workspace:*"
     }
 }

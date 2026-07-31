@@ -12,7 +12,8 @@
     },
     "dependencies": {
         "@lab/fractal": "workspace:*",
-        "@lab/math": "workspace:*"
+        "@lab/math": "workspace:*",
+        "@lab/precision": "workspace:*"
     },
     "devDependencies": {
         "vite": "^6.3.5"
