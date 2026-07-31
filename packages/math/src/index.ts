@@ -4,6 +4,7 @@ export {
     compileComplex,
     complex,
     complexAbs,
+    complexBackend,
     complexAcos,
     complexAdd,
     complexAsin,
@@ -32,6 +33,8 @@ export { add, call, mul, n, neg, pow, s } from './expr.js';
 export type { Expr } from './expr.js';
 export { evaluate } from './evaluate.js';
 export type { Scope } from './evaluate.js';
+export { compileWith, evaluateWith, numberBackend } from './evaluate-with.js';
+export type { CompiledWithExpr, EvaluationScope, NumericBackend } from './evaluate-with.js';
 export { format } from './format.js';
 export { containsZero, evaluateInterval, interval } from './interval.js';
 export type { Interval, IntervalScope } from './interval.js';

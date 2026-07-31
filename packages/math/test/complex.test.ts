@@ -3,9 +3,11 @@ import {
     add,
     call,
     compileComplex,
+    compileWith,
     complex,
     complexAbs,
     complexAdd,
+    complexBackend,
     complexDiv,
     complexMul,
     complexPow,
@@ -82,6 +84,15 @@ describe('complex expressions', () => {
 
         expectComplexClose(compiled(z, c), evaluateComplex(expr, { z, c }));
         expect(() => compiled(z)).toThrow('Expected 2 values');
+    });
+
+    it('can use the generic backend compiler for complex expressions', () => {
+        const expr = parse('z^2 + c');
+        const compiled = compileWith(expr, ['z', 'c'], complexBackend);
+        const z = complex(-0.25, 0.75);
+        const c = complex(-0.8, 0.156);
+
+        expectComplexClose(compiled(z, c), evaluateComplex(expr, { z, c }));
     });
 
     it('rejects real-only functions clearly', () => {

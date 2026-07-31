@@ -1,4 +1,5 @@
 import type { Expr } from './expr.js';
+import type { NumericBackend } from './evaluate-with.js';
 
 export type Complex = { re: number; im: number };
 
@@ -156,6 +157,23 @@ const complexBuiltins: Record<string, (...args: Complex[]) => Complex> = {
     sqrt: complexSqrt,
     tan: complexTan,
     tanh: complexTanh,
+};
+
+export const complexBackend: NumericBackend<Complex> = {
+    fromNumber: (value) => complex(value),
+    neg: complexNeg,
+    add: (terms) => complexAdd(...terms),
+    mul: (factors) => complexMul(...factors),
+    pow: complexPow,
+    call: (name, args) => {
+        const fn = complexBuiltins[name];
+
+        if (!fn) {
+            throw new Error(`Unknown complex function: ${name}`);
+        }
+
+        return fn(...args);
+    },
 };
 
 type ComplexEvaluator = (values: Complex[]) => Complex;
