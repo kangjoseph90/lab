@@ -1,5 +1,5 @@
 import type { RenderOptions } from './renderer';
-import type { Viewport } from '../../graph/viewport';
+import type { FractalViewport } from '../viewport';
 
 export type FractalRenderWorkerRequest =
     | { type: 'cancel'; id: number }
@@ -8,7 +8,7 @@ export type FractalRenderWorkerRequest =
           id: number;
           width: number;
           height: number;
-          viewport: Viewport;
+          viewport: FractalViewport;
           options: RenderOptions;
       };
 

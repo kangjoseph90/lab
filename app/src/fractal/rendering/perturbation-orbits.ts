@@ -1,6 +1,6 @@
-import { dd, ddAdd, ddMul, ddSub } from '@lab/precision';
+import { dd, ddAdd, ddMul, ddSub, ddToNumber } from '@lab/precision';
 import type { DoubleDouble } from '@lab/precision';
-import type { Viewport } from '../../graph/viewport';
+import type { FractalViewport } from '../viewport';
 import type { RenderOptions } from './renderer';
 import { splitDoubleDoubleForGpu, splitFloat } from './gpu-precision';
 
@@ -34,7 +34,7 @@ const TILE_ANCHOR_CANDIDATES = [
 ] as const;
 
 export function createMandelbrotTileOrbits(
-    viewport: Viewport,
+    viewport: FractalViewport,
     width: number,
     height: number,
     maxIterations: number,
@@ -140,7 +140,7 @@ function findNearestStableAnchor(
 }
 
 function findStableTileAnchor(
-    viewport: Viewport,
+    viewport: FractalViewport,
     width: number,
     height: number,
     tileLeft: number,
@@ -156,23 +156,13 @@ function findStableTileAnchor(
         const orbit =
             precision === 'double-double'
                 ? createStableMandelbrotOrbitDD(
-                      mandelbrotCoordinateDD(
-                          viewport.centerX,
-                          pixelX,
-                          width,
-                          viewport.unitsPerPixel,
-                      ),
-                      mandelbrotCoordinateDD(
-                          viewport.centerY,
-                          height / 2 - pixelY,
-                          0,
-                          viewport.unitsPerPixel,
-                      ),
+                      mandelbrotCoordinateXDD(viewport, pixelX, width),
+                      mandelbrotCoordinateYDD(viewport, pixelY, height),
                       maxIterations,
                   )
                 : createStableMandelbrotOrbitNumber(
-                      viewport.centerX + (pixelX - width / 2) * viewport.unitsPerPixel,
-                      viewport.centerY - (pixelY - height / 2) * viewport.unitsPerPixel,
+                      ddToNumber(mandelbrotCoordinateXDD(viewport, pixelX, width)),
+                      ddToNumber(mandelbrotCoordinateYDD(viewport, pixelY, height)),
                       maxIterations,
                   );
 
@@ -245,13 +235,20 @@ function createStableMandelbrotOrbitDD(
     return orbit;
 }
 
-function mandelbrotCoordinateDD(
-    center: number,
+function mandelbrotCoordinateXDD(
+    viewport: FractalViewport,
     pixel: number,
-    size: number,
-    unitsPerPixel: number,
+    width: number,
 ): DoubleDouble {
-    return ddAdd(dd(center), ddMul(dd(pixel - size / 2), dd(unitsPerPixel)));
+    return ddAdd(viewport.centerX, ddMul(dd(pixel - width / 2), viewport.unitsPerPixel));
+}
+
+function mandelbrotCoordinateYDD(
+    viewport: FractalViewport,
+    pixel: number,
+    height: number,
+): DoubleDouble {
+    return ddSub(viewport.centerY, ddMul(dd(pixel - height / 2), viewport.unitsPerPixel));
 }
 
 function writeNumberOrbitPoint(orbit: Float32Array, index: number, re: number, im: number): void {

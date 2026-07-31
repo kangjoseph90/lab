@@ -1,4 +1,4 @@
-import type { Viewport } from '../../graph/viewport';
+import type { FractalViewport } from '../viewport';
 import { FractalGpuRenderer } from './gpu-renderer';
 import type { FractalRenderWorkerRequest, FractalRenderWorkerResponse } from './render-protocol';
 
@@ -64,7 +64,7 @@ export class FractalRenderer {
         this.#pending = undefined;
     }
 
-    render(viewport: Viewport, options: RenderOptions): Promise<void> {
+    render(viewport: FractalViewport, options: RenderOptions): Promise<void> {
         this.#pending?.resolve();
         const id = ++this.#renderId;
 
@@ -88,7 +88,7 @@ export class FractalRenderer {
         return this.#renderCpu(id, viewport, options);
     }
 
-    #renderCpu(id: number, viewport: Viewport, options: RenderOptions): Promise<void> {
+    #renderCpu(id: number, viewport: FractalViewport, options: RenderOptions): Promise<void> {
         this.#worker.postMessage({
             type: 'render',
             id,

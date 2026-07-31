@@ -1,4 +1,4 @@
-import type { Viewport } from '../../graph/viewport';
+import type { FractalViewport } from '../viewport';
 import {
     DOUBLE_DOUBLE_SHADER,
     NUMBER_SHADER,
@@ -6,7 +6,7 @@ import {
     WORKGROUP_SIZE,
 } from './gpu-shaders';
 import { createMandelbrotTileOrbits } from './perturbation-orbits';
-import { splitFloat } from './gpu-precision';
+import { splitDoubleDoubleForGpu, splitFloat } from './gpu-precision';
 import type { RenderOptions } from './renderer';
 
 const UNIFORM_BUFFER_SIZE = 20 * Float32Array.BYTES_PER_ELEMENT;
@@ -25,7 +25,7 @@ export class FractalGpuRenderer {
     }
 
     async render(
-        viewport: Viewport,
+        viewport: FractalViewport,
         options: RenderOptions,
         isCurrent: () => boolean,
     ): Promise<void> {
@@ -71,9 +71,9 @@ export class FractalGpuRenderer {
                   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
               })
             : undefined;
-        const centerX = splitFloat(viewport.centerX);
-        const centerY = splitFloat(viewport.centerY);
-        const unitsPerPixel = splitFloat(viewport.unitsPerPixel);
+        const centerX = splitDoubleDoubleForGpu(viewport.centerX);
+        const centerY = splitDoubleDoubleForGpu(viewport.centerY);
+        const unitsPerPixel = splitDoubleDoubleForGpu(viewport.unitsPerPixel);
         const juliaRe = splitFloat(options.fractal.type === 'julia' ? options.fractal.c.re : 0);
         const juliaIm = splitFloat(options.fractal.type === 'julia' ? options.fractal.c.im : 0);
         const uniforms = new Float32Array([
@@ -81,9 +81,9 @@ export class FractalGpuRenderer {
             height,
             options.maxIterations,
             options.fractal.type === 'julia' ? 1 : 0,
-            viewport.centerX,
-            viewport.centerY,
-            viewport.unitsPerPixel,
+            centerX.hi,
+            centerY.hi,
+            unitsPerPixel.hi,
             0,
             centerX.lo,
             centerY.lo,

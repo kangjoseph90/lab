@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { dd, ddAdd, ddMul, ddSub } from '@lab/precision';
+import { dd, ddAdd, ddMul, ddSub, ddToNumber } from '@lab/precision';
 import type { DoubleDouble } from '@lab/precision';
 import {
     ddComplex,
@@ -31,10 +31,14 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
         const { id, width, height, viewport, options } = request;
         const chunkHeight = 24;
         const useDoubleDouble = options.precision === 'double-double';
-        const centerX = useDoubleDouble ? dd(viewport.centerX) : undefined;
-        const centerY = useDoubleDouble ? dd(viewport.centerY) : undefined;
-        const unitsPerPixel = useDoubleDouble ? dd(viewport.unitsPerPixel) : undefined;
-        const halfWidthOffset = useDoubleDouble ? ddMul(dd(width / 2), unitsPerPixel!) : undefined;
+        const numberViewport = {
+            centerX: ddToNumber(viewport.centerX),
+            centerY: ddToNumber(viewport.centerY),
+            unitsPerPixel: ddToNumber(viewport.unitsPerPixel),
+        };
+        const halfWidthOffset = useDoubleDouble
+            ? ddMul(dd(width / 2), viewport.unitsPerPixel)
+            : undefined;
 
         for (let startY = 0; startY < height; startY += chunkHeight) {
             if (id !== activeRenderId) return;
@@ -43,12 +47,12 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
             const pixels = new Uint8ClampedArray(width * rows * 4);
 
             for (let py = startY; py < startY + rows; py += 1) {
-                const y = viewport.centerY - (py - height / 2) * viewport.unitsPerPixel;
+                const y = numberViewport.centerY - (py - height / 2) * numberViewport.unitsPerPixel;
                 const yDD = useDoubleDouble
-                    ? ddSub(centerY!, ddMul(dd(py - height / 2), unitsPerPixel!))
+                    ? ddSub(viewport.centerY, ddMul(dd(py - height / 2), viewport.unitsPerPixel))
                     : undefined;
-                let x = viewport.centerX - (width / 2) * viewport.unitsPerPixel;
-                let xDD = useDoubleDouble ? ddSub(centerX!, halfWidthOffset!) : undefined;
+                let x = numberViewport.centerX - (width / 2) * numberViewport.unitsPerPixel;
+                let xDD = useDoubleDouble ? ddSub(viewport.centerX, halfWidthOffset!) : undefined;
 
                 for (let px = 0; px < width; px += 1) {
                     const result =
@@ -63,8 +67,8 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
                     pixels[offset + 2] = b;
                     pixels[offset + 3] = 255;
 
-                    x += viewport.unitsPerPixel;
-                    if (xDD && unitsPerPixel) xDD = ddAdd(xDD, unitsPerPixel);
+                    x += numberViewport.unitsPerPixel;
+                    if (xDD) xDD = ddAdd(xDD, viewport.unitsPerPixel);
                 }
             }
 

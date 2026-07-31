@@ -1,5 +1,14 @@
 import './styles.css';
 import { FractalRenderer } from './fractal/rendering/renderer';
+import {
+    fractalScreenToWorldNumber,
+    fractalViewportToNumber,
+    fractalViewport,
+    panFractalViewport,
+    scaleFractalViewportUnits,
+    zoomAtFractal,
+} from './fractal/viewport';
+import type { FractalViewport } from './fractal/viewport';
 import { parseEquation } from './graph/equation';
 import { GraphRenderer } from './graph/rendering/renderer';
 import { DEFAULT_VIEWPORT, zoomAt } from './graph/viewport';
@@ -7,17 +16,9 @@ import type { Point, Viewport } from './graph/viewport';
 
 type Mode = 'graph' | 'fractal';
 
-const FRACTAL_VIEWPORT: Viewport = {
-    centerX: -0.5,
-    centerY: 0,
-    unitsPerPixel: 0.005,
-};
+const FRACTAL_VIEWPORT = fractalViewport(-0.5, 0, 0.005);
 
-const JULIA_VIEWPORT: Viewport = {
-    centerX: 0,
-    centerY: 0,
-    unitsPerPixel: 0.005,
-};
+const JULIA_VIEWPORT = fractalViewport(0, 0, 0.005);
 
 const app = document.querySelector<HTMLElement>('#app');
 if (!app) throw new Error('App root was not found.');
@@ -122,9 +123,13 @@ const rendering = requireElement<HTMLElement>('#rendering');
 const graphRenderer = new GraphRenderer(canvas);
 const fractalRenderer = new FractalRenderer(canvas);
 let activeMode: Mode = 'graph';
-let viewport: Viewport = { ...DEFAULT_VIEWPORT };
+let graphViewport: Viewport = { ...DEFAULT_VIEWPORT };
+let fractalCurrentViewport: FractalViewport = scaleFractalViewportUnits(FRACTAL_VIEWPORT, 1);
 let equation = parseEquation(input.value);
-let dragStart: { point: Point; viewport: Viewport } | undefined;
+let dragStart:
+    | { point: Point; mode: 'graph'; viewport: Viewport }
+    | { point: Point; mode: 'fractal'; viewport: FractalViewport }
+    | undefined;
 let canvasScale = 1;
 let inputTimer: number | undefined;
 let renderRequest = 0;
@@ -135,7 +140,17 @@ function resizeCanvas(): void {
     const scale = Math.min(window.devicePixelRatio, 1.5);
     canvas.width = Math.max(1, Math.round(rect.width * scale));
     canvas.height = Math.max(1, Math.round(rect.height * scale));
-    viewport = { ...viewport, unitsPerPixel: viewport.unitsPerPixel * (canvasScale / scale) };
+    if (activeMode === 'graph') {
+        graphViewport = {
+            ...graphViewport,
+            unitsPerPixel: graphViewport.unitsPerPixel * (canvasScale / scale),
+        };
+    } else {
+        fractalCurrentViewport = scaleFractalViewportUnits(
+            fractalCurrentViewport,
+            canvasScale / scale,
+        );
+    }
     canvasScale = scale;
     scheduleRender();
 }
@@ -145,8 +160,8 @@ function scheduleRender(): void {
     rendering.classList.add('is-visible');
     const render =
         activeMode === 'graph'
-            ? graphRenderer.render(viewport, { lineWidth: 1.35, color: [19, 105, 196] })
-            : fractalRenderer.render(viewport, {
+            ? graphRenderer.render(graphViewport, { lineWidth: 1.35, color: [19, 105, 196] })
+            : fractalRenderer.render(fractalCurrentViewport, {
                   fractal: readFractalConfig(),
                   maxIterations: readMaxIterations(),
                   precision: readFractalPrecision(),
@@ -206,25 +221,55 @@ input.addEventListener('input', () => {
 
 canvas.addEventListener('pointerdown', (event) => {
     canvas.setPointerCapture(event.pointerId);
-    dragStart = { point: canvasPoint(event), viewport: { ...viewport } };
+    dragStart =
+        activeMode === 'graph'
+            ? { point: canvasPoint(event), mode: 'graph', viewport: { ...graphViewport } }
+            : {
+                  point: canvasPoint(event),
+                  mode: 'fractal',
+                  viewport: fractalCurrentViewport,
+              };
     currentRenderer().beginPan();
     canvas.classList.add('is-dragging');
 });
 
 canvas.addEventListener('pointermove', (event) => {
     const point = canvasPoint(event);
-    coordinates.textContent = `x ${(viewport.centerX + (point.x - canvas.width / 2) * viewport.unitsPerPixel).toFixed(2)} / y ${(viewport.centerY - (point.y - canvas.height / 2) * viewport.unitsPerPixel).toFixed(2)}`;
+    const world =
+        activeMode === 'graph'
+            ? {
+                  x:
+                      graphViewport.centerX +
+                      (point.x - canvas.width / 2) * graphViewport.unitsPerPixel,
+                  y:
+                      graphViewport.centerY -
+                      (point.y - canvas.height / 2) * graphViewport.unitsPerPixel,
+              }
+            : fractalScreenToWorldNumber(
+                  point,
+                  { x: canvas.width, y: canvas.height },
+                  fractalCurrentViewport,
+              );
+    coordinates.textContent = `x ${formatCoordinate(world.x)} / y ${formatCoordinate(world.y)} / scale ${formatScale(currentUnitsPerPixel())}`;
 
     if (!dragStart) return;
-    viewport = {
-        ...dragStart.viewport,
-        centerX:
-            dragStart.viewport.centerX -
-            (point.x - dragStart.point.x) * dragStart.viewport.unitsPerPixel,
-        centerY:
-            dragStart.viewport.centerY +
-            (point.y - dragStart.point.y) * dragStart.viewport.unitsPerPixel,
-    };
+    if (dragStart.mode === 'graph') {
+        graphViewport = {
+            ...dragStart.viewport,
+            centerX:
+                dragStart.viewport.centerX -
+                (point.x - dragStart.point.x) * dragStart.viewport.unitsPerPixel,
+            centerY:
+                dragStart.viewport.centerY +
+                (point.y - dragStart.point.y) * dragStart.viewport.unitsPerPixel,
+        };
+    } else {
+        fractalCurrentViewport = panFractalViewport(
+            dragStart.viewport,
+            point.x - dragStart.point.x,
+            point.y - dragStart.point.y,
+        );
+    }
     currentRenderer().previewPan(point.x - dragStart.point.x, point.y - dragStart.point.y);
 });
 
@@ -239,12 +284,25 @@ canvas.addEventListener(
     'wheel',
     (event) => {
         event.preventDefault();
-        viewport = zoomAt(
-            viewport,
-            canvasPoint(event),
-            { x: canvas.width, y: canvas.height },
-            Math.exp(event.deltaY * 0.001),
-        );
+        const factor = Math.exp(event.deltaY * 0.001);
+        if (activeMode === 'graph') {
+            graphViewport = zoomAt(
+                graphViewport,
+                canvasPoint(event),
+                {
+                    x: canvas.width,
+                    y: canvas.height,
+                },
+                factor,
+            );
+        } else {
+            fractalCurrentViewport = zoomAtFractal(
+                fractalCurrentViewport,
+                canvasPoint(event),
+                { x: canvas.width, y: canvas.height },
+                factor,
+            );
+        }
         scheduleRender();
     },
     { passive: false },
@@ -282,12 +340,21 @@ fractalTypeInput.addEventListener('change', () => {
 });
 
 function zoomFromCenter(factor: number): void {
-    viewport = zoomAt(
-        viewport,
-        { x: canvas.width / 2, y: canvas.height / 2 },
-        { x: canvas.width, y: canvas.height },
-        factor,
-    );
+    if (activeMode === 'graph') {
+        graphViewport = zoomAt(
+            graphViewport,
+            { x: canvas.width / 2, y: canvas.height / 2 },
+            { x: canvas.width, y: canvas.height },
+            factor,
+        );
+    } else {
+        fractalCurrentViewport = zoomAtFractal(
+            fractalCurrentViewport,
+            { x: canvas.width / 2, y: canvas.height / 2 },
+            { x: canvas.width, y: canvas.height },
+            factor,
+        );
+    }
     scheduleRender();
 }
 
@@ -313,6 +380,22 @@ function setMode(mode: Mode): void {
 
 function currentRenderer(): Pick<GraphRenderer, 'beginPan' | 'cancel' | 'previewPan'> {
     return activeMode === 'graph' ? graphRenderer : fractalRenderer;
+}
+
+function currentUnitsPerPixel(): number {
+    return activeMode === 'graph'
+        ? graphViewport.unitsPerPixel
+        : fractalViewportToNumber(fractalCurrentViewport).unitsPerPixel;
+}
+
+function formatCoordinate(value: number): string {
+    return Math.abs(value) >= 1000 || (value !== 0 && Math.abs(value) < 0.01)
+        ? value.toExponential(2)
+        : value.toFixed(2);
+}
+
+function formatScale(value: number): string {
+    return value.toExponential(2);
 }
 
 function readMaxIterations(): number {
@@ -354,13 +437,22 @@ function readNumber(inputElement: HTMLInputElement, fallback: number): number {
     return Number.isFinite(value) ? value : fallback;
 }
 
-function currentFractalViewport(): Viewport {
+function currentFractalViewport(): FractalViewport {
     return fractalTypeInput.value === 'julia' ? JULIA_VIEWPORT : FRACTAL_VIEWPORT;
 }
 
 function resetViewport(): void {
-    const base = activeMode === 'graph' ? DEFAULT_VIEWPORT : currentFractalViewport();
-    viewport = { ...base, unitsPerPixel: base.unitsPerPixel / canvasScale };
+    if (activeMode === 'graph') {
+        graphViewport = {
+            ...DEFAULT_VIEWPORT,
+            unitsPerPixel: DEFAULT_VIEWPORT.unitsPerPixel / canvasScale,
+        };
+    } else {
+        fractalCurrentViewport = scaleFractalViewportUnits(
+            currentFractalViewport(),
+            1 / canvasScale,
+        );
+    }
 }
 
 function updateFractalControls(): void {
