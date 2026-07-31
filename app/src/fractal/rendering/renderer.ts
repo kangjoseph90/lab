@@ -1,0 +1,99 @@
+import type { Viewport } from '../../graph/viewport';
+import type { FractalRenderWorkerRequest, FractalRenderWorkerResponse } from './render-protocol';
+
+export type RenderOptions = {
+    fractal: FractalConfig;
+    maxIterations: number;
+};
+
+export type FractalConfig =
+    | { type: 'mandelbrot' }
+    | { type: 'julia'; c: { re: number; im: number } };
+
+export class FractalRenderer {
+    readonly #canvas: HTMLCanvasElement;
+    readonly #context: CanvasRenderingContext2D;
+    readonly #preview = document.createElement('canvas');
+    readonly #previewContext: CanvasRenderingContext2D;
+    readonly #worker = new Worker(new URL('./fractal.worker.ts', import.meta.url), {
+        type: 'module',
+    });
+    #renderId = 0;
+    #pending: { id: number; resolve: () => void; reject: (cause: Error) => void } | undefined;
+
+    constructor(canvas: HTMLCanvasElement) {
+        const context = canvas.getContext('2d');
+        const previewContext = this.#preview.getContext('2d');
+        if (!context) throw new Error('Canvas 2D is not supported.');
+        if (!previewContext) throw new Error('Canvas 2D is not supported.');
+
+        this.#canvas = canvas;
+        this.#context = context;
+        this.#previewContext = previewContext;
+        this.#worker.onmessage = (event: MessageEvent<FractalRenderWorkerResponse>) =>
+            this.#onMessage(event.data);
+        this.#worker.onerror = (event) => this.#fail(new Error(event.message));
+    }
+
+    beginPan(): void {
+        this.cancel();
+        this.#preview.width = this.#canvas.width;
+        this.#preview.height = this.#canvas.height;
+        this.#previewContext.drawImage(this.#canvas, 0, 0);
+    }
+
+    previewPan(dx: number, dy: number): void {
+        this.#context.fillStyle = '#111316';
+        this.#context.fillRect(0, 0, this.#canvas.width, this.#canvas.height);
+        this.#context.drawImage(this.#preview, dx, dy);
+    }
+
+    cancel(): void {
+        const id = ++this.#renderId;
+        this.#worker.postMessage({ type: 'cancel', id } satisfies FractalRenderWorkerRequest);
+        this.#pending?.resolve();
+        this.#pending = undefined;
+    }
+
+    render(viewport: Viewport, options: RenderOptions): Promise<void> {
+        this.#pending?.resolve();
+        const id = ++this.#renderId;
+
+        this.#worker.postMessage({
+            type: 'render',
+            id,
+            width: this.#canvas.width,
+            height: this.#canvas.height,
+            viewport,
+            options,
+        } satisfies FractalRenderWorkerRequest);
+
+        return new Promise((resolve, reject) => {
+            this.#pending = { id, resolve, reject };
+        });
+    }
+
+    #onMessage(message: FractalRenderWorkerResponse): void {
+        if (message.id !== this.#renderId) return;
+
+        if (message.type === 'chunk') {
+            const pixels = new Uint8ClampedArray(message.pixels);
+            const image = new ImageData(pixels, message.width, message.height);
+            this.#context.putImageData(image, 0, message.y);
+            return;
+        }
+
+        if (message.type === 'error') {
+            this.#fail(new Error(message.message));
+            return;
+        }
+
+        this.#pending?.resolve();
+        this.#pending = undefined;
+    }
+
+    #fail(cause: Error): void {
+        this.#pending?.reject(cause);
+        this.#pending = undefined;
+    }
+}

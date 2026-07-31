@@ -20,6 +20,9 @@ importers:
 
   app:
     dependencies:
+      '@lab/fractal':
+        specifier: workspace:*
+        version: link:../packages/fractal
       '@lab/math':
         specifier: workspace:*
         version: link:../packages/math
