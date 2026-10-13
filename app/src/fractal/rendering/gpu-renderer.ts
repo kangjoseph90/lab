@@ -5,7 +5,7 @@ import {
     PERTURBATION_SHADER,
     WORKGROUP_SIZE,
 } from './gpu-shaders';
-import { createTileOrbits } from './perturbation-orbits';
+import { PerturbationOrbitFinder } from './perturbation-orbits';
 import { splitDoubleDoubleForGpu, splitFloat } from './gpu-precision';
 import type { FractalRenderWarning, RenderOptions } from './renderer';
 
@@ -18,6 +18,7 @@ export class FractalGpuRenderer {
     #numberPipeline: GPUComputePipeline | undefined;
     #doubleDoublePipeline: GPUComputePipeline | undefined;
     #perturbationPipeline: GPUComputePipeline | undefined;
+    readonly #orbitFinder = new PerturbationOrbitFinder();
 
     constructor(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) {
         this.#canvas = canvas;
@@ -33,7 +34,7 @@ export class FractalGpuRenderer {
         const width = this.#canvas.width;
         const height = this.#canvas.height;
         const perturbation = options.perturbation
-            ? createTileOrbits(
+            ? this.#orbitFinder.createTileOrbits(
                   viewport,
                   width,
                   height,

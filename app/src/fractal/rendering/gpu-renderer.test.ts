@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fractalViewport } from '../viewport';
 import { FractalGpuRenderer } from './gpu-renderer';
 import { NUMBER_SHADER, PERTURBATION_SHADER } from './gpu-shaders';
+import { PerturbationOrbitFinder } from './perturbation-orbits';
 import type { RenderOptions } from './renderer';
 
 const options: RenderOptions = {
@@ -56,9 +57,22 @@ function setup(width = 8, height = 8) {
     return { renderer, device, context };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+});
 
 describe('FractalGpuRenderer perturbation warnings', () => {
+    it('retains the reference finder between GPU frames', async () => {
+        const { renderer } = setup();
+        const find = vi.spyOn(PerturbationOrbitFinder.prototype, 'createTileOrbits');
+        const view = fractalViewport(-0.5, 0, 0.005);
+        await renderer.render(view, options, () => true);
+        await renderer.render(view, options, () => true);
+        expect(find.mock.results[0]!.value.evaluatedCandidates).toBe(1);
+        expect(find.mock.results[1]!.value.evaluatedCandidates).toBe(0);
+        expect(find.mock.results[1]!.value.reusedAnchors).toBe(1);
+    });
     it('warns when every anchor escapes and still draws the direct GPU result', async () => {
         const { renderer, device, context } = setup();
         expect(await renderer.render(fractalViewport(3, 3, 0.005), options, () => true)).toBe(
@@ -82,7 +96,7 @@ describe('FractalGpuRenderer perturbation warnings', () => {
     it('does not warn when missing tile anchors can borrow a stable anchor', async () => {
         const { renderer, device } = setup(128, 64);
         expect(
-            await renderer.render(fractalViewport(-1, 0, 0.02), options, () => true),
+            await renderer.render(fractalViewport(0.5, 0, 0.02), options, () => true),
         ).toBeUndefined();
         expect(device.createShaderModule).toHaveBeenCalledWith({ code: PERTURBATION_SHADER });
     });
