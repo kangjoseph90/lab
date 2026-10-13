@@ -42,8 +42,13 @@ select {
     z-index: 2;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
     border-right: 1px solid #d9dad7;
     background: #fff;
+}
+.sidebar > * {
+    flex-shrink: 0;
 }
 .brand {
     display: flex;
@@ -99,32 +104,139 @@ select {
     background: #1369c4;
 }
 .expression-form {
-    padding: 20px 16px;
-    border-bottom: 1px solid #e4e5e2;
+    padding: 20px 16px 0;
 }
-.expression-form label {
-    display: block;
-    margin: 0 0 9px 42px;
+.expression-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 9px;
     color: #73777a;
     font-size: 0.72rem;
     font-weight: 700;
     text-transform: uppercase;
 }
+.expression-heading button {
+    min-height: 24px;
+    padding: 2px 0 2px 8px;
+    border: 0;
+    color: #1369c4;
+    background: transparent;
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+.expression-heading button:hover {
+    text-decoration: underline;
+}
+.expression-list {
+    display: grid;
+    gap: 10px;
+    max-height: 32vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+.expression-entry {
+    min-width: 0;
+}
 .expression-row {
     display: grid;
-    grid-template-columns: 30px minmax(0, 1fr);
-    gap: 12px;
+    grid-template-columns: 24px minmax(0, 1fr) 24px 24px;
+    gap: 6px;
     align-items: center;
 }
-.color-swatch {
-    width: 10px;
-    height: 10px;
-    justify-self: center;
-    border-radius: 50%;
-    background: #1369c4;
-    box-shadow: 0 0 0 4px #e6f0fb;
+.expression-entry.is-active:not(:only-child) input[type='text'] {
+    border-color: #93badf;
 }
-.expression-row input {
+.expression-entry.is-muted input[type='text'] {
+    color: #94999c;
+}
+.expression-entry.is-muted .graph-color {
+    opacity: 0.4;
+}
+.expression-entry .error {
+    min-height: 0;
+    margin: 6px 0 0 30px;
+}
+.expression-entry .error:empty {
+    display: none;
+}
+.expression-visibility {
+    position: relative;
+    display: grid;
+    width: 24px;
+    height: 32px;
+    place-items: center;
+    border-radius: 4px;
+    color: #85898b;
+    cursor: pointer;
+}
+.expression-visibility input {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+.expression-visibility svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
+}
+.expression-visibility input:checked + svg .visibility-slash {
+    display: none;
+}
+.expression-visibility input:not(:checked) + svg {
+    opacity: 0.5;
+}
+.expression-visibility:hover {
+    color: #33373a;
+}
+.expression-visibility:has(input:focus-visible) {
+    outline: 2px solid #1369c4;
+}
+.remove-expression {
+    width: 24px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    color: #a4a8aa;
+    background: transparent;
+    cursor: pointer;
+    font-size: 1.1rem;
+}
+.remove-expression:hover {
+    color: #b33a32;
+}
+.graph-color {
+    width: 24px;
+    height: 24px;
+    padding: 5px;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+}
+.graph-color::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+.graph-color::-webkit-color-swatch {
+    border: 0;
+    border-radius: 50%;
+}
+.graph-color::-moz-color-swatch {
+    border: 0;
+    border-radius: 50%;
+}
+.expression-row input[type='text'] {
     width: 100%;
     min-width: 0;
     padding: 10px 11px;
@@ -136,7 +248,7 @@ select {
     font-family: 'Cascadia Code', Consolas, monospace;
     font-size: 0.88rem;
 }
-.expression-row input:focus {
+.expression-row input[type='text']:focus {
     border-color: #1369c4;
     box-shadow: 0 0 0 3px #dceaf8;
 }
@@ -150,11 +262,21 @@ select {
     font-size: 0.75rem;
     line-height: 1.4;
 }
-.fractal-panel {
+.fractal-panel,
+.graph-panel {
     display: grid;
     gap: 14px;
     padding: 20px 16px;
     border-bottom: 1px solid #e4e5e2;
+}
+.backend-error {
+    margin: 0;
+    color: #b33a32;
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+.backend-error:empty {
+    display: none;
 }
 .field {
     display: grid;
@@ -215,7 +337,61 @@ select {
     color: #555a5d;
     font-size: 0.78rem;
 }
+.graph-presets {
+    padding: 0 16px;
+    border-bottom: 1px solid #e4e5e2;
+}
+.graph-presets summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 0;
+    color: #555a5d;
+    cursor: pointer;
+    list-style: none;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+.graph-presets summary::-webkit-details-marker {
+    display: none;
+}
+.graph-presets summary::after {
+    width: 6px;
+    height: 6px;
+    margin-right: 4px;
+    border-right: 1.5px solid #8a8e91;
+    border-bottom: 1.5px solid #8a8e91;
+    transform: rotate(45deg);
+    content: '';
+}
+.graph-presets[open] summary::after {
+    transform: rotate(225deg);
+}
+.preset-controls {
+    display: grid;
+    gap: 14px;
+    padding: 0 0 20px;
+}
+.preset-description {
+    margin: 0;
+    color: #73777a;
+    font-size: 0.75rem;
+    line-height: 1.5;
+}
+.preset-description:empty {
+    display: none;
+}
+.graph-presets summary:focus-visible,
+.expression-heading button:focus-visible,
+.remove-expression:focus-visible,
+.graph-color:focus-visible {
+    outline: 2px solid #1369c4;
+    outline-offset: 2px;
+}
 .is-hidden {
+    display: none;
+}
+.sidebar-note:empty {
     display: none;
 }
 .sidebar-note {
@@ -303,9 +479,11 @@ select {
 @media (max-width: 720px) {
     .calculator {
         grid-template-columns: 1fr;
-        grid-template-rows: 148px minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
     }
     .sidebar {
+        max-height: 50vh;
+        overflow-y: auto;
         border-right: 0;
         border-bottom: 1px solid #d9dad7;
     }
@@ -323,7 +501,16 @@ select {
         padding: 10px 14px 8px;
         border-bottom: 0;
     }
-    .expression-form label,
+    .graph-panel {
+        padding: 0 14px 10px;
+        border-bottom: 0;
+    }
+    .graph-presets {
+        padding: 0 14px;
+    }
+    .graph-presets summary {
+        padding: 14px 0;
+    }
     .sidebar-note {
         display: none;
     }

@@ -1,9 +1,11 @@
 import type { Equation } from '../equation';
 import type { RenderOptions } from './renderer';
 import type { Viewport } from '../viewport';
+import type { GraphLayer } from './layers';
 
 export type RenderWorkerRequest =
     | { type: 'set-equation'; equation: Equation }
+    | { type: 'set-layers'; layers: readonly GraphLayer[] }
     | { type: 'cancel'; id: number }
     | {
           type: 'render';
