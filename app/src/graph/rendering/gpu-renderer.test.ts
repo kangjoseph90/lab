@@ -95,6 +95,33 @@ function setup() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('GraphGpuRenderer', () => {
+    it('renders multiple equations in one dispatch and changes colors without recompiling', async () => {
+        const state = setup();
+        const second = parseEquation('y < x');
+        const layers = [
+            { equation, color: [19, 105, 196] as const },
+            { equation: second, color: [220, 30, 40] as const },
+        ];
+        await state.renderer.renderLayers(layers, viewport, 17, 11, options, () => true);
+        expect(state.pass.dispatchWorkgroups).toHaveBeenCalledTimes(1);
+        expect(state.buffers).toHaveLength(3);
+        const firstUniforms = state.device.queue.writeBuffer.mock
+            .calls[0]![2] as unknown as Float32Array;
+        expect([...firstUniforms.slice(8)]).toEqual([19, 105, 196, 0, 220, 30, 40, 0]);
+        await state.renderer.renderLayers(
+            [{ ...layers[0]!, color: [0, 180, 80] }, layers[1]!],
+            viewport,
+            17,
+            11,
+            options,
+            () => true,
+        );
+        expect(state.device.createComputePipelineAsync).toHaveBeenCalledTimes(1);
+        const uniforms = state.device.queue.writeBuffer.mock
+            .calls[1]![2] as unknown as Float32Array;
+        expect([...uniforms.slice(8, 12)]).toEqual([0, 180, 80, 0]);
+    });
+
     it('covers partial workgroups and reuses a pipeline when only the view changes', async () => {
         const state = setup();
         const image = await state.render();

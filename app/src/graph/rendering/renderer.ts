@@ -1,6 +1,7 @@
 import { compileEquationExpr } from '../equation';
 import type { Equation } from '../equation';
 import { GraphGpuRenderer } from './gpu-renderer';
+import type { GraphLayer } from './layers';
 import type { RenderWorkerRequest, RenderWorkerResponse } from './render-protocol';
 import type { Viewport } from '../viewport';
 import { screenToWorld, worldToScreen } from '../viewport';
@@ -28,6 +29,8 @@ export class GraphRenderer {
     #viewport: Viewport | undefined;
     readonly #gpu = new GraphGpuRenderer();
     #equation: Equation | undefined;
+    #layers: readonly GraphLayer[] | undefined;
+    readonly #validated = new WeakSet<Equation>();
 
     constructor(canvas: HTMLCanvasElement) {
         const context = canvas.getContext('2d');
@@ -50,7 +53,30 @@ export class GraphRenderer {
         compileEquationExpr(equation);
         this.cancel();
         this.#equation = equation;
-        this.#worker.postMessage({ type: 'set-equation', equation } satisfies RenderWorkerRequest);
+        this.#layers = undefined;
+        this.#worker.postMessage({
+            type: 'set-equation',
+            equation: { expr: equation.expr, relation: equation.relation },
+        } satisfies RenderWorkerRequest);
+    }
+
+    setLayers(layers: readonly GraphLayer[]): void {
+        for (const { equation } of layers) {
+            if (!this.#validated.has(equation)) {
+                compileEquationExpr(equation);
+                this.#validated.add(equation);
+            }
+        }
+        this.cancel();
+        this.#equation = undefined;
+        this.#layers = layers;
+        this.#worker.postMessage({
+            type: 'set-layers',
+            layers: layers.map(({ equation, color }) => ({
+                equation: { expr: equation.expr, relation: equation.relation },
+                color,
+            })),
+        } satisfies RenderWorkerRequest);
     }
 
     beginPan(): void {
@@ -80,23 +106,40 @@ export class GraphRenderer {
         this.#buffer.width = this.#canvas.width;
         this.#buffer.height = this.#canvas.height;
 
+        if (this.#layers?.length === 0) {
+            this.#context.fillStyle = '#f7f7f4';
+            this.#context.fillRect(0, 0, this.#canvas.width, this.#canvas.height);
+            drawGrid(this.#context, viewport, this.#canvas.width, this.#canvas.height);
+            return Promise.resolve();
+        }
+
         if (options.backend === 'gpu') {
-            if (!this.#equation) return Promise.reject(new Error('No equation has been compiled.'));
-            return this.#gpu
-                .render(
-                    this.#equation,
-                    viewport,
-                    this.#canvas.width,
-                    this.#canvas.height,
-                    options,
-                    () => id === this.#renderId,
-                )
-                .then((image) => {
-                    if (!image || id !== this.#renderId) return;
-                    this.#bufferContext.putImageData(image, 0, 0);
-                    this.#context.putImageData(image, 0, 0);
-                    drawGrid(this.#context, viewport, this.#canvas.width, this.#canvas.height);
-                });
+            const isCurrent = () => id === this.#renderId;
+            const render = this.#layers
+                ? this.#gpu.renderLayers(
+                      this.#layers,
+                      viewport,
+                      this.#canvas.width,
+                      this.#canvas.height,
+                      options,
+                      isCurrent,
+                  )
+                : this.#equation
+                  ? this.#gpu.render(
+                        this.#equation,
+                        viewport,
+                        this.#canvas.width,
+                        this.#canvas.height,
+                        options,
+                        isCurrent,
+                    )
+                  : Promise.reject(new Error('No equation has been compiled.'));
+            return render.then((image) => {
+                if (!image || id !== this.#renderId) return;
+                this.#bufferContext.putImageData(image, 0, 0);
+                this.#context.putImageData(image, 0, 0);
+                drawGrid(this.#context, viewport, this.#canvas.width, this.#canvas.height);
+            });
         }
 
         this.#worker.postMessage({

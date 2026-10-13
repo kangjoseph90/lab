@@ -1,7 +1,7 @@
 import { differentiate } from '@lab/math';
 import type { Expr } from '@lab/math';
 import type { Equation } from '../equation';
-import { GRAPH_GPU_HELPERS, GRAPH_GPU_RENDER } from './gpu-shader-source';
+import { GRAPH_GPU_HELPERS, GRAPH_GPU_COVERAGE } from './gpu-shader-source';
 
 export const GRAPH_WORKGROUP_SIZE = 8;
 const GPU_LIMIT = 1e30;
@@ -168,14 +168,57 @@ function intervalFunction(expr: Expr): string {
 }
 
 export function createGraphShader(equation: Equation): string {
-    const relation = { eq: 0, lt: 1, lte: 2, gt: 3, gte: 4 }[equation.relation];
-    return [
-        `const RELATION: u32 = ${relation}u;`,
-        GRAPH_GPU_HELPERS,
-        scalarFunction('equation_value', equation.expr),
-        scalarFunction('equation_dx', differentiate(equation.expr, 'x')),
-        scalarFunction('equation_dy', differentiate(equation.expr, 'y')),
-        intervalFunction(equation.expr),
-        GRAPH_GPU_RENDER,
-    ].join('\n');
+    return createGraphSceneShader([equation]);
+}
+
+export function createGraphSceneShader(equations: readonly Equation[]): string {
+    if (!equations.length) throw new Error('A GPU scene needs at least one equation.');
+    const preamble = `
+struct Uniforms {
+    size: vec2f,
+    center: vec2f,
+    units: f32,
+    line_width: f32,
+    padding: vec2f,
+    colors: array<vec4f, ${equations.length}>,
+}
+@group(0) @binding(0) var<uniform> params: Uniforms;
+@group(0) @binding(1) var<storage, read_write> pixels: array<u32>;
+`;
+    const source = [GRAPH_GPU_HELPERS, preamble];
+    equations.forEach((equation, index) => {
+        const relation = { eq: 0, lt: 1, lte: 2, gt: 3, gte: 4 }[equation.relation];
+        const suffix = (code: string) =>
+            code.replace(
+                /\b(RELATION|equation_value|equation_dx|equation_dy|equation_range|nearby_zero|zero_distance|coverage)\b/g,
+                (name) => `${name}_${index}`,
+            );
+        source.push(
+            suffix(
+                [
+                    `const RELATION: u32 = ${relation}u;`,
+                    scalarFunction('equation_value', equation.expr),
+                    scalarFunction('equation_dx', differentiate(equation.expr, 'x')),
+                    scalarFunction('equation_dy', differentiate(equation.expr, 'y')),
+                    intervalFunction(equation.expr),
+                    GRAPH_GPU_COVERAGE,
+                ].join('\n'),
+            ),
+        );
+    });
+    // Later equations paint over earlier ones. Round each blend like the CPU
+    // Uint8ClampedArray path, including translucent inequality fills.
+    source.push(`
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+    let size = vec2u(params.size);
+    if (id.x >= size.x || id.y >= size.y) { return; }
+    let delta = (vec2f(id.xy) - params.size * 0.5) * params.units;
+    let p = params.center + vec2f(delta.x, -delta.y);
+    var rgb = vec3f(247.0, 247.0, 244.0);
+    ${equations.map((_, index) => `rgb = floor(mix(rgb, params.colors[${index}].xyz, coverage_${index}(p)) + vec3f(0.5));`).join('\n')}
+    let packed = vec3u(rgb);
+    pixels[id.y * size.x + id.x] = packed.x | (packed.y << 8u) | (packed.z << 16u) | 0xff000000u;
+}`);
+    return source.join('\n');
 }

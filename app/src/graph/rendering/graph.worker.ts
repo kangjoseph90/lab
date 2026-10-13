@@ -5,24 +5,41 @@ import type { CompiledEquation } from '../equation';
 import { getCoverage, INEQUALITY_OPACITY } from './render-coverage';
 import type { RenderWorkerRequest, RenderWorkerResponse } from './render-protocol';
 import { classifyTile } from './tile-classification';
+import { blendPixel } from './layers';
+import type { GraphColor } from './layers';
 
 const worker = self as DedicatedWorkerGlobalScope;
 const background: readonly [number, number, number] = [247, 247, 244];
 const tileSize = 8;
-let equation: CompiledEquation | undefined;
+type CompiledLayer = { equation: CompiledEquation; color?: GraphColor };
+let layers: CompiledLayer[] | undefined;
+const equations = new Map<string, CompiledEquation>();
 let equationError: string | undefined;
 let activeRenderId = 0;
 
 worker.onmessage = (event: MessageEvent<RenderWorkerRequest>) => {
     const message = event.data;
 
-    if (message.type === 'set-equation') {
+    if (message.type === 'set-equation' || message.type === 'set-layers') {
         activeRenderId = 0;
         try {
-            equation = compileEquationExpr(message.equation);
+            const entries =
+                message.type === 'set-equation' ? [{ equation: message.equation }] : message.layers;
+            layers = entries.map((entry) => {
+                const key = JSON.stringify(entry.equation);
+                let compiled = equations.get(key);
+                if (!compiled) {
+                    compiled = compileEquationExpr(entry.equation);
+                    if (equations.size >= 32) equations.delete(equations.keys().next().value!);
+                    equations.set(key, compiled);
+                }
+                return 'color' in entry
+                    ? { equation: compiled, color: entry.color }
+                    : { equation: compiled };
+            });
             equationError = undefined;
         } catch (cause) {
-            equation = undefined;
+            layers = undefined;
             equationError = cause instanceof Error ? cause.message : String(cause);
         }
         return;
@@ -34,26 +51,20 @@ worker.onmessage = (event: MessageEvent<RenderWorkerRequest>) => {
     }
 
     activeRenderId = message.id;
-    void render(message, equation);
+    void render(message, layers);
 };
 
 async function render(
     request: Extract<RenderWorkerRequest, { type: 'render' }>,
-    compiled: CompiledEquation | undefined,
+    compiledLayers: CompiledLayer[] | undefined,
 ): Promise<void> {
     try {
-        if (!compiled) throw new Error(equationError ?? 'No equation has been compiled.');
+        if (!compiledLayers) throw new Error(equationError ?? 'No equation has been compiled.');
 
         const { id, width, height, viewport, options } = request;
         const threshold = options.lineWidth * viewport.unitsPerPixel;
         const chunkHeight = 24;
         const backgroundWord = rgbaWord(...background, 255);
-        const insideWord = rgbaWord(
-            mix(background[0], options.color[0], INEQUALITY_OPACITY),
-            mix(background[1], options.color[1], INEQUALITY_OPACITY),
-            mix(background[2], options.color[2], INEQUALITY_OPACITY),
-            255,
-        );
 
         for (let startY = 0; startY < height; startY += chunkHeight) {
             if (id !== activeRenderId) return;
@@ -63,70 +74,78 @@ async function render(
             const words = new Uint32Array(pixels.buffer);
             words.fill(backgroundWord);
 
-            for (let tileY = startY; tileY < startY + rows; tileY += tileSize) {
-                const tileHeight = Math.min(tileSize, startY + rows - tileY);
+            for (const layer of compiledLayers) {
+                const compiled = layer.equation;
+                const color = layer.color ?? options.color;
+                for (let tileY = startY; tileY < startY + rows; tileY += tileSize) {
+                    const tileHeight = Math.min(tileSize, startY + rows - tileY);
 
-                for (let tileX = 0; tileX < width; tileX += tileSize) {
-                    const tileWidth = Math.min(tileSize, width - tileX);
-                    const samples = sampleTile(
-                        compiled,
-                        tileX,
-                        tileY,
-                        tileWidth,
-                        tileHeight,
-                        width,
-                        height,
-                        viewport,
-                    );
-                    const gradients = sampleTileGradients(
-                        compiled,
-                        tileX,
-                        tileY,
-                        tileWidth,
-                        tileHeight,
-                        width,
-                        height,
-                        viewport,
-                    );
-                    const sampleRadius =
-                        Math.hypot((tileWidth - 1) / 4, (tileHeight - 1) / 4) *
-                        viewport.unitsPerPixel;
+                    for (let tileX = 0; tileX < width; tileX += tileSize) {
+                        const tileWidth = Math.min(tileSize, width - tileX);
+                        const samples = sampleTile(
+                            compiled,
+                            tileX,
+                            tileY,
+                            tileWidth,
+                            tileHeight,
+                            width,
+                            height,
+                            viewport,
+                        );
+                        const gradients = sampleTileGradients(
+                            compiled,
+                            tileX,
+                            tileY,
+                            tileWidth,
+                            tileHeight,
+                            width,
+                            height,
+                            viewport,
+                        );
+                        const sampleRadius =
+                            Math.hypot((tileWidth - 1) / 4, (tileHeight - 1) / 4) *
+                            viewport.unitsPerPixel;
 
-                    const classification = classifyTile(
-                        compiled.relation,
-                        samples,
-                        gradients,
-                        sampleRadius,
-                    );
+                        const classification = classifyTile(
+                            compiled.relation,
+                            samples,
+                            gradients,
+                            sampleRadius,
+                        );
 
-                    if (classification === 'outside') continue;
+                        if (classification === 'outside') continue;
 
-                    if (classification === 'inside') {
-                        for (let py = tileY; py < tileY + tileHeight; py += 1) {
-                            const start = (py - startY) * width + tileX;
-                            words.fill(insideWord, start, start + tileWidth);
+                        if (classification === 'inside') {
+                            for (let py = tileY; py < tileY + tileHeight; py += 1) {
+                                for (let px = tileX; px < tileX + tileWidth; px++) {
+                                    blendPixel(
+                                        pixels,
+                                        ((py - startY) * width + px) * 4,
+                                        color,
+                                        INEQUALITY_OPACITY,
+                                    );
+                                }
+                            }
+                            continue;
                         }
-                        continue;
-                    }
 
-                    for (let py = tileY; py < tileY + tileHeight; py += 1) {
-                        const y = viewport.centerY - (py - height / 2) * viewport.unitsPerPixel;
+                        for (let py = tileY; py < tileY + tileHeight; py += 1) {
+                            const y = viewport.centerY - (py - height / 2) * viewport.unitsPerPixel;
 
-                        for (let px = tileX; px < tileX + tileWidth; px += 1) {
-                            const x = viewport.centerX + (px - width / 2) * viewport.unitsPerPixel;
-                            const coverage = getCoverage(
-                                compiled,
-                                x,
-                                y,
-                                threshold,
-                                viewport.unitsPerPixel,
-                            );
-                            const offset = ((py - startY) * width + px) * 4;
+                            for (let px = tileX; px < tileX + tileWidth; px += 1) {
+                                const x =
+                                    viewport.centerX + (px - width / 2) * viewport.unitsPerPixel;
+                                const coverage = getCoverage(
+                                    compiled,
+                                    x,
+                                    y,
+                                    threshold,
+                                    viewport.unitsPerPixel,
+                                );
+                                const offset = ((py - startY) * width + px) * 4;
 
-                            pixels[offset] = mix(background[0], options.color[0], coverage);
-                            pixels[offset + 1] = mix(background[1], options.color[1], coverage);
-                            pixels[offset + 2] = mix(background[2], options.color[2], coverage);
-                            pixels[offset + 3] = 255;
+                                if (coverage > 0) blendPixel(pixels, offset, color, coverage);
+                            }
                         }
                     }
                 }
@@ -202,10 +221,6 @@ function sampleTileGradients(
 
 function post(message: RenderWorkerResponse, transfer: Transferable[] = []): void {
     worker.postMessage(message, transfer);
-}
-
-function mix(from: number, to: number, amount: number): number {
-    return Math.round(from + (to - from) * amount);
 }
 
 function rgbaWord(red: number, green: number, blue: number, alpha: number): number {

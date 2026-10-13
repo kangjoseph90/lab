@@ -136,18 +136,7 @@ fn range_ceil(a: vec2f) -> vec2f { return ceil(a); }
 fn range_round(a: vec2f) -> vec2f { return floor(a + vec2f(0.5)); }
 `;
 
-export const GRAPH_GPU_RENDER = /* wgsl */ `
-struct Uniforms {
-    size: vec2f,
-    center: vec2f,
-    units: f32,
-    line_width: f32,
-    padding: vec2f,
-    color: vec4f,
-}
-@group(0) @binding(0) var<uniform> params: Uniforms;
-@group(0) @binding(1) var<storage, read_write> pixels: array<u32>;
-
+export const GRAPH_GPU_COVERAGE = /* wgsl */ `
 fn nearby_zero(p: vec2f, threshold: f32) -> bool {
     let radius = threshold * 1.5;
     let range = equation_range(vec2f(p.x - radius, p.x + radius), vec2f(p.y - radius, p.y + radius));
@@ -212,16 +201,5 @@ fn coverage(p: vec2f) -> f32 {
     let inside = select(value.value >= 0.0, value.value <= 0.0, RELATION == 2u);
     if (!result.valid) { return select(0.0, 0.2, inside); }
     return clamp(0.5 + select(-result.value, result.value, inside) / params.units, 0.0, 1.0) * 0.2;
-}
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3u) {
-    let size = vec2u(params.size);
-    if (id.x >= size.x || id.y >= size.y) { return; }
-    let delta = (vec2f(id.xy) - params.size * 0.5) * params.units;
-    let p = params.center + vec2f(delta.x, -delta.y);
-    let amount = coverage(p);
-    let background = vec3f(247.0, 247.0, 244.0);
-    let rgb = vec3u(floor(mix(background, params.color.xyz, amount) + vec3f(0.5)));
-    pixels[id.y * size.x + id.x] = rgb.x | (rgb.y << 8u) | (rgb.z << 16u) | 0xff000000u;
 }
 `;

@@ -1,11 +1,14 @@
 import type { Equation } from '../equation';
 import type { Viewport } from '../viewport';
 import type { RenderOptions } from './renderer';
-import { createGraphShader, GRAPH_WORKGROUP_SIZE } from './gpu-shader';
+import { createGraphSceneShader, GRAPH_WORKGROUP_SIZE } from './gpu-shader';
+import type { GraphLayer } from './layers';
 
 export class GraphGpuRenderer {
     #device: Promise<GPUDevice> | undefined;
-    readonly #pipelines = new Map<Equation, Promise<GPUComputePipeline>>();
+    readonly #pipelines = new Map<string, Promise<GPUComputePipeline>>();
+    readonly #sources = new WeakMap<readonly GraphLayer[], string>();
+    readonly #singleLayers = new WeakMap<Equation, readonly GraphLayer[]>();
 
     async render(
         equation: Equation,
@@ -15,9 +18,30 @@ export class GraphGpuRenderer {
         options: RenderOptions,
         isCurrent: () => boolean,
     ): Promise<ImageData | undefined> {
+        let layers = this.#singleLayers.get(equation);
+        if (!layers || layers[0]!.color.some((value, index) => value !== options.color[index])) {
+            layers = [{ equation, color: options.color }];
+            this.#singleLayers.set(equation, layers);
+        }
+        return this.renderLayers(layers, viewport, width, height, options, isCurrent);
+    }
+
+    async renderLayers(
+        layers: readonly GraphLayer[],
+        viewport: Viewport,
+        width: number,
+        height: number,
+        options: RenderOptions,
+        isCurrent: () => boolean,
+    ): Promise<ImageData | undefined> {
         const device = await this.#getDevice();
         if (!isCurrent()) return;
-        const pipeline = await this.#getPipeline(device, equation);
+        let source = this.#sources.get(layers);
+        if (!source) {
+            source = createGraphSceneShader(layers.map((layer) => layer.equation));
+            this.#sources.set(layers, source);
+        }
+        const pipeline = await this.#getPipeline(device, source);
         if (!isCurrent()) return;
         const bytes = width * height * 4;
         if (
@@ -42,8 +66,7 @@ export class GraphGpuRenderer {
             options.lineWidth,
             0,
             0,
-            ...options.color,
-            0,
+            ...layers.flatMap((layer) => [...layer.color, 0]),
         ]);
         if (
             !uniforms.every(Number.isFinite) ||
@@ -130,11 +153,11 @@ export class GraphGpuRenderer {
         return pending;
     }
 
-    #getPipeline(device: GPUDevice, equation: Equation): Promise<GPUComputePipeline> {
-        const cached = this.#pipelines.get(equation);
+    #getPipeline(device: GPUDevice, source: string): Promise<GPUComputePipeline> {
+        const cached = this.#pipelines.get(source);
         if (cached) return cached;
         const pipeline = (async () => {
-            const module = device.createShaderModule({ code: createGraphShader(equation) });
+            const module = device.createShaderModule({ code: source });
             const info = await module.getCompilationInfo();
             const errors = info.messages.filter((message) => message.type === 'error');
             if (errors.length)
@@ -157,9 +180,9 @@ export class GraphGpuRenderer {
         })();
         // Keep a small cache so editing equations never grows GPU resources indefinitely.
         if (this.#pipelines.size >= 8) this.#pipelines.delete(this.#pipelines.keys().next().value!);
-        this.#pipelines.set(equation, pipeline);
+        this.#pipelines.set(source, pipeline);
         void pipeline.catch(() => {
-            if (this.#pipelines.get(equation) === pipeline) this.#pipelines.delete(equation);
+            if (this.#pipelines.get(source) === pipeline) this.#pipelines.delete(source);
         });
         return pipeline;
     }

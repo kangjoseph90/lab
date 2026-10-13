@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseEquation } from '../equation';
+import { parseEquation, compileEquation } from '../equation';
 import { GraphGpuRenderer } from './gpu-renderer';
 import { GraphRenderer } from './renderer';
 import type { RenderWorkerRequest, RenderWorkerResponse } from './render-protocol';
@@ -64,6 +64,26 @@ afterEach(() => {
 });
 
 describe('GraphRenderer backend transitions', () => {
+    it('sends cloneable ASTs even when callers pass compiled equations', () => {
+        const state = setup();
+        state.renderer.setLayers([{ equation: compileEquation('y=sin(x)'), color: [220, 30, 40] }]);
+        const message = state.worker.messages.at(-1)!;
+        expect(() => structuredClone(message)).not.toThrow();
+        if (message.type !== 'set-layers') throw new Error('Expected layer update');
+        expect(message.layers).toHaveLength(1);
+        expect(message.layers[0]!.equation).not.toHaveProperty('value');
+    });
+
+    it('clears the graph and keeps the grid when all expressions are hidden or invalid', async () => {
+        const state = setup();
+        state.renderer.setLayers([]);
+        await state.renderer.render(viewport, { ...options, backend: 'gpu' });
+        expect(state.gpu).not.toHaveBeenCalled();
+        expect(state.mainContext.fillRect).toHaveBeenCalledWith(0, 0, 17, 11);
+        expect(state.mainContext.stroke).toHaveBeenCalledTimes(2);
+        expect(state.worker.messages.at(-1)?.type).toBe('cancel');
+    });
+
     it('cancels pending CPU work and ignores late worker chunks after switching to GPU', async () => {
         const state = setup();
         const cpu = state.renderer.render(viewport, { ...options, backend: 'cpu' });

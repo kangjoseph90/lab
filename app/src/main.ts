@@ -9,7 +9,9 @@ import {
     zoomAtFractal,
 } from './fractal/viewport';
 import type { FractalViewport } from './fractal/viewport';
-import { parseEquation } from './graph/equation';
+import { ExpressionList } from './graph/expression-list';
+import { GRAPH_PRESETS, presetViewport } from './graph/presets';
+import type { GraphPreset } from './graph/presets';
 import { GraphRenderer } from './graph/rendering/renderer';
 import { DEFAULT_VIEWPORT, zoomAt } from './graph/viewport';
 import type { Point, Viewport } from './graph/viewport';
@@ -35,12 +37,11 @@ app.innerHTML = `
         <button type="button" id="mode-fractal">Fractal</button>
       </div>
       <form class="expression-form" id="expression-form">
-        <label for="expression">Equation</label>
-        <div class="expression-row">
-          <span class="color-swatch" aria-hidden="true"></span>
-          <input id="expression" name="expression" value="x^2 + y^2 = 4" spellcheck="false" autocomplete="off" />
+        <div class="expression-heading">
+          <span>Equations</span>
+          <button type="button" id="add-expression">+ 식 추가</button>
         </div>
-        <p class="error" id="expression-error" role="alert"></p>
+        <div class="expression-list" id="expression-list"></div>
       </form>
       <section class="graph-panel" id="graph-panel">
         <div class="field">
@@ -93,8 +94,19 @@ app.innerHTML = `
           <input id="max-iterations" name="max-iterations" type="number" min="16" max="4096" step="16" value="256" />
         </div>
         <p class="fractal-name" id="fractal-name">Mandelbrot set</p>
+        <p class="backend-error" id="fractal-render-error" role="alert"></p>
       </section>
-      <div class="sidebar-note" id="sidebar-note">x, y, and real-valued z expressions are available.</div>
+      <details class="graph-presets" id="graph-presets">
+        <summary id="presets-title">추천 수식</summary>
+        <div class="preset-controls">
+          <div class="field">
+            <label for="preset-select">Example</label>
+            <select id="preset-select" name="preset-select"></select>
+          </div>
+          <p class="preset-description" id="preset-description" aria-live="polite"></p>
+        </div>
+      </details>
+      <div class="sidebar-note" id="sidebar-note"></div>
     </aside>
     <main class="plot-area">
       <canvas id="graph" aria-label="Graph canvas"></canvas>
@@ -111,11 +123,13 @@ app.innerHTML = `
 
 const canvas = requireElement<HTMLCanvasElement>('#graph');
 const form = requireElement<HTMLFormElement>('#expression-form');
-const input = requireElement<HTMLInputElement>('#expression');
-const error = requireElement<HTMLElement>('#expression-error');
 const graphPanel = requireElement<HTMLElement>('#graph-panel');
 const graphBackendInput = requireElement<HTMLSelectElement>('#graph-backend');
 const graphRenderError = requireElement<HTMLElement>('#graph-render-error');
+const fractalRenderError = requireElement<HTMLElement>('#fractal-render-error');
+const graphPresets = requireElement<HTMLElement>('#graph-presets');
+const presetSelect = requireElement<HTMLSelectElement>('#preset-select');
+const presetDescription = requireElement<HTMLElement>('#preset-description');
 if (!navigator.gpu) graphBackendInput.value = 'cpu';
 const fractalPanel = requireElement<HTMLElement>('#fractal-panel');
 const graphModeButton = requireElement<HTMLButtonElement>('#mode-graph');
@@ -139,15 +153,67 @@ const fractalRenderer = new FractalRenderer(canvas);
 let activeMode: Mode = 'graph';
 let graphViewport: Viewport = { ...DEFAULT_VIEWPORT };
 let fractalCurrentViewport: FractalViewport = scaleFractalViewportUnits(FRACTAL_VIEWPORT, 1);
-let equation = parseEquation(input.value);
 let dragStart:
     | { point: Point; mode: 'graph'; viewport: Viewport }
     | { point: Point; mode: 'fractal'; viewport: FractalViewport }
     | undefined;
 let canvasScale = 1;
-let inputTimer: number | undefined;
 let renderRequest = 0;
-graphRenderer.setEquation(equation);
+let selectedPreset: GraphPreset | undefined = GRAPH_PRESETS.find(
+    (preset) => preset.id === 'circle',
+);
+const expressionList = new ExpressionList(requireElement<HTMLElement>('#expression-list'), {
+    onChange: () => {
+        graphRenderer.setLayers(expressionList.layers);
+        if (activeMode === 'graph') scheduleRender();
+    },
+    onActiveChange: syncPresetSelection,
+});
+graphRenderer.setLayers(expressionList.layers);
+requireElement<HTMLButtonElement>('#add-expression').addEventListener('click', () =>
+    expressionList.add(),
+);
+
+function renderPresetList(): void {
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '추천 수식 선택';
+    presetSelect.replaceChildren(placeholder);
+    const groups = new Map<string, HTMLOptGroupElement>();
+    for (const preset of GRAPH_PRESETS) {
+        const label = `${preset.domain === 'real' ? 'x · y' : '복소수 z'} · ${preset.group}`;
+        let group = groups.get(label);
+        if (!group) {
+            group = document.createElement('optgroup');
+            group.label = label;
+            groups.set(label, group);
+            presetSelect.append(group);
+        }
+        const option = document.createElement('option');
+        option.value = preset.id;
+        option.textContent = preset.name;
+        group.append(option);
+    }
+    syncPresetSelection();
+}
+
+function syncPresetSelection(): void {
+    const expression = expressionList.activeInput.value.replace(/\s/g, '');
+    selectedPreset = GRAPH_PRESETS.find(
+        (preset) => preset.expression.replace(/\s/g, '') === expression,
+    );
+    presetSelect.value = selectedPreset?.id ?? '';
+    presetDescription.textContent = selectedPreset?.description ?? '';
+}
+
+presetSelect.addEventListener('change', () => {
+    const preset = GRAPH_PRESETS.find((entry) => entry.id === presetSelect.value);
+    if (!preset) return;
+    selectedPreset = preset;
+    dragStart = undefined;
+    graphViewport = presetViewport(preset, { x: canvas.width, y: canvas.height });
+    expressionList.apply(preset.expression);
+});
 
 function resizeCanvas(): void {
     const rect = canvas.getBoundingClientRect();
@@ -172,6 +238,7 @@ function resizeCanvas(): void {
 function scheduleRender(): void {
     const request = ++renderRequest;
     graphRenderError.textContent = '';
+    fractalRenderError.textContent = '';
     rendering.classList.add('is-visible');
     const render =
         activeMode === 'graph'
@@ -205,25 +272,15 @@ function scheduleRender(): void {
 
 function updateEquation(): void {
     if (activeMode !== 'graph') return;
-
-    try {
-        equation = parseEquation(input.value);
-        graphRenderer.setEquation(equation);
-        clearError();
-        scheduleRender();
-    } catch (cause) {
-        showError(cause);
-    }
+    expressionList.updateActive();
 }
 
 function showError(cause: unknown): void {
-    error.textContent = cause instanceof Error ? cause.message : String(cause);
-    input.setAttribute('aria-invalid', 'true');
+    fractalRenderError.textContent = cause instanceof Error ? cause.message : String(cause);
 }
 
 function clearError(): void {
-    error.textContent = '';
-    input.removeAttribute('aria-invalid');
+    fractalRenderError.textContent = '';
 }
 
 function canvasPoint(event: PointerEvent | WheelEvent): Point {
@@ -236,12 +293,7 @@ function canvasPoint(event: PointerEvent | WheelEvent): Point {
 
 form.addEventListener('submit', (event) => {
     event.preventDefault();
-    window.clearTimeout(inputTimer);
     updateEquation();
-});
-input.addEventListener('input', () => {
-    window.clearTimeout(inputTimer);
-    inputTimer = window.setTimeout(updateEquation, 250);
 });
 
 canvas.addEventListener('pointerdown', (event) => {
@@ -397,13 +449,12 @@ function setMode(mode: Mode): void {
     fractalModeButton.classList.toggle('is-active', activeMode === 'fractal');
     form.classList.toggle('is-hidden', activeMode !== 'graph');
     graphPanel.classList.toggle('is-hidden', activeMode !== 'graph');
+    graphPresets.classList.toggle('is-hidden', activeMode !== 'graph');
     fractalPanel.classList.toggle('is-hidden', activeMode !== 'fractal');
     projectTitle.textContent = activeMode === 'graph' ? 'Graph Lab' : 'Fractal Lab';
     updateFractalControls();
     sidebarNote.textContent =
-        activeMode === 'graph'
-            ? 'x, y, and real-valued z expressions are available.'
-            : 'Drag to pan. Scroll or use controls to zoom.';
+        activeMode === 'graph' ? '' : 'Drag to pan. Scroll or use controls to zoom.';
     clearError();
     scheduleRender();
 }
@@ -477,10 +528,9 @@ function currentFractalViewport(): FractalViewport {
 
 function resetViewport(): void {
     if (activeMode === 'graph') {
-        graphViewport = {
-            ...DEFAULT_VIEWPORT,
-            unitsPerPixel: DEFAULT_VIEWPORT.unitsPerPixel / canvasScale,
-        };
+        graphViewport = selectedPreset
+            ? presetViewport(selectedPreset, { x: canvas.width, y: canvas.height })
+            : { ...DEFAULT_VIEWPORT, unitsPerPixel: DEFAULT_VIEWPORT.unitsPerPixel / canvasScale };
     } else {
         fractalCurrentViewport = scaleFractalViewportUnits(
             currentFractalViewport(),
@@ -509,7 +559,7 @@ function updateFractalControls(): void {
         : `Mandelbrot set, ${precisionLabel}, ${backendLabel}${perturbationLabel}`;
     projectSubtitle.textContent =
         activeMode === 'graph'
-            ? `Implicit calculator, ${readGraphBackend().toUpperCase()}`
+            ? 'Implicit calculator'
             : isJulia
               ? 'Julia explorer'
               : 'Mandelbrot explorer';
@@ -522,5 +572,6 @@ function requireElement<T extends Element>(selector: string): T {
 }
 
 const resizeObserver = new ResizeObserver(resizeCanvas);
+renderPresetList();
 updateFractalControls();
 resizeObserver.observe(canvas);
