@@ -8,6 +8,7 @@ import {
 import { PerturbationOrbitFinder } from './perturbation-orbits';
 import { splitDoubleDoubleForGpu, splitFloat } from './gpu-precision';
 import type { FractalRenderWarning, RenderOptions } from './renderer';
+import { sampleGridSize } from './antialiasing';
 
 const UNIFORM_BUFFER_SIZE = 20 * Float32Array.BYTES_PER_ELEMENT;
 
@@ -85,7 +86,7 @@ export class FractalGpuRenderer {
             centerX.hi,
             centerY.hi,
             unitsPerPixel.hi,
-            0,
+            sampleGridSize(options.antialiasing),
             centerX.lo,
             centerY.lo,
             unitsPerPixel.lo,

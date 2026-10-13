@@ -3,12 +3,20 @@ import type { DoubleDouble } from '@lab/precision';
 import type { FractalViewport } from '../viewport';
 import type { RenderOptions } from './renderer';
 import { splitDoubleDoubleForGpu, splitFloat } from './gpu-precision';
+import { deepZoomArithmetic } from './deep-zoom';
+import type { DeepZoomArithmetic, PrecisePoint } from './deep-zoom';
 
 const PERTURBATION_TILE_SIZE = 64;
+type OrbitArray = Float32Array | Float64Array;
+type OrbitStorage = 'gpu' | 'cpu';
+
+function createOrbitArray(length: number, storage: OrbitStorage): OrbitArray {
+    return storage === 'cpu' ? new Float64Array(length) : new Float32Array(length);
+}
 
 export type TileOrbits = {
-    orbit: Float32Array;
-    anchors: Float32Array;
+    orbit: OrbitArray;
+    anchors: OrbitArray;
     tileSize: number;
     tilesX: number;
     anchorCount: number;
@@ -16,8 +24,12 @@ export type TileOrbits = {
     reusedAnchors: number;
 };
 
-type ReferenceOrbit = { referenceIterations: number; orbit: Float32Array };
-type CachedAnchor = ReferenceOrbit & { pointX: DoubleDouble; pointY: DoubleDouble };
+type ReferenceOrbit = { referenceIterations: number; orbit: OrbitArray };
+type CachedAnchor = ReferenceOrbit & {
+    pointX: DoubleDouble;
+    pointY: DoubleDouble;
+    precisePoint?: PrecisePoint;
+};
 type TileAnchor = CachedAnchor & { pixelX: number; pixelY: number };
 type StableTileAnchor = TileAnchor & { tileIndex: number };
 type OrbitTrial = {
@@ -46,6 +58,11 @@ export class PerturbationOrbitFinder {
     #references: CachedAnchor[] = [];
     #frameKey = '';
     #result: TileOrbits | undefined;
+    readonly #storage: OrbitStorage;
+
+    constructor(storage: OrbitStorage = 'gpu') {
+        this.#storage = storage;
+    }
 
     createTileOrbits(
         viewport: FractalViewport,
@@ -55,8 +72,11 @@ export class PerturbationOrbitFinder {
         precision: RenderOptions['precision'],
         fractal: RenderOptions['fractal'],
     ): TileOrbits {
+        const arithmetic =
+            this.#storage === 'cpu' ? deepZoomArithmetic(viewport, precision) : undefined;
         const key = JSON.stringify([
             precision,
+            arithmetic?.bits,
             maxIterations,
             fractal.type,
             fractal.type === 'julia' ? [fractal.c.re, fractal.c.im] : null,
@@ -88,6 +108,8 @@ export class PerturbationOrbitFinder {
             precision,
             fractal,
             key === this.#key ? this.#references : [],
+            this.#storage,
+            arithmetic,
         );
         this.#key = key;
         this.#references = references;
@@ -120,7 +142,11 @@ function projectAnchor(
     viewport: FractalViewport,
     width: number,
     height: number,
+    arithmetic?: DeepZoomArithmetic,
 ): TileAnchor {
+    if (arithmetic && reference.precisePoint) {
+        return { ...reference, ...arithmetic.project(reference.precisePoint, width, height) };
+    }
     return {
         ...reference,
         pixelX:
@@ -140,14 +166,16 @@ function buildTileOrbits(
     precision: RenderOptions['precision'],
     fractal: RenderOptions['fractal'],
     previousReferences: CachedAnchor[],
+    storage: OrbitStorage,
+    arithmetic?: DeepZoomArithmetic,
 ): { result: TileOrbits; references: CachedAnchor[] } {
     const tileSize = PERTURBATION_TILE_SIZE;
     const tilesX = Math.ceil(width / tileSize);
     const tilesY = Math.ceil(height / tileSize);
     const tileCount = tilesX * tilesY;
     const orbitStride = maxIterations + 1;
-    const orbit = new Float32Array(tileCount * orbitStride * 4);
-    const anchors = new Float32Array(tileCount * 4);
+    const orbit = createOrbitArray(tileCount * orbitStride * 4, storage);
+    const anchors = createOrbitArray(tileCount * 4, storage);
     const stableAnchors: StableTileAnchor[] = [];
     const reusable = new Map<number, TileAnchor>();
     let evaluatedCandidates = 0;
@@ -155,7 +183,7 @@ function buildTileOrbits(
 
     // Project once and bucket by the new tile: no per-tile scan of the whole cache.
     for (const reference of previousReferences) {
-        const projected = projectAnchor(reference, viewport, width, height);
+        const projected = projectAnchor(reference, viewport, width, height, arithmetic);
         const { pixelX, pixelY } = projected;
         if (
             !Number.isFinite(pixelX) ||
@@ -199,6 +227,8 @@ function buildTileOrbits(
                     maxIterations,
                     precision,
                     fractal,
+                    storage,
+                    arithmetic,
                 );
                 candidate = search.anchor;
                 evaluatedCandidates += search.evaluatedCandidates;
@@ -235,8 +265,8 @@ function buildTileOrbits(
 }
 
 function fillMissingTileOrbits(
-    orbit: Float32Array,
-    anchors: Float32Array,
+    orbit: OrbitArray,
+    anchors: OrbitArray,
     tilesX: number,
     tilesY: number,
     orbitStride: number,
@@ -301,9 +331,11 @@ function findStableTileAnchor(
     maxIterations: number,
     precision: RenderOptions['precision'],
     fractal: RenderOptions['fractal'],
+    storage: OrbitStorage,
+    arithmetic?: DeepZoomArithmetic,
 ): { anchor?: TileAnchor; evaluatedCandidates: number } {
     // Failed trials overwrite the same scratch buffer, rather than allocating nine orbits.
-    const scratch = new Float32Array((maxIterations + 1) * 4);
+    const scratch = createOrbitArray((maxIterations + 1) * 4, storage);
     const visited = new Set<string>();
     let evaluatedCandidates = 0;
     let best: { pixelX: number; pixelY: number; trial: OrbitTrial } | undefined;
@@ -321,13 +353,22 @@ function findStableTileAnchor(
             pointX = dd(ddToNumber(pointX));
             pointY = dd(ddToNumber(pointY));
         }
+        const precisePoint = arithmetic?.point(pixelX, pixelY, width, height);
         const trial =
-            precision === 'double-double'
-                ? createTileOrbitDD(pointX, pointY, maxIterations, fractal, scratch)
-                : createTileOrbitNumber(pointX.hi, pointY.hi, maxIterations, fractal, scratch);
+            arithmetic && precisePoint
+                ? createPreciseTileOrbit(arithmetic, precisePoint, maxIterations, fractal, scratch)
+                : precision === 'double-double'
+                  ? createTileOrbitDD(pointX, pointY, maxIterations, fractal, scratch)
+                  : createTileOrbitNumber(pointX.hi, pointY.hi, maxIterations, fractal, scratch);
         if (trial.reference) {
             // Anchor the shader to the exact coordinate used for the CPU reference orbit.
-            return projectAnchor({ pointX, pointY, ...trial.reference }, viewport, width, height);
+            return projectAnchor(
+                { pointX, pointY, ...(precisePoint ? { precisePoint } : {}), ...trial.reference },
+                viewport,
+                width,
+                height,
+                arithmetic,
+            );
         }
         if (
             !best ||
@@ -362,7 +403,7 @@ function createTileOrbitNumber(
     y: number,
     maxIterations: number,
     fractal: RenderOptions['fractal'],
-    orbit: Float32Array,
+    orbit: OrbitArray,
 ): OrbitTrial {
     let zx = fractal.type === 'julia' ? x : 0;
     let zy = fractal.type === 'julia' ? y : 0;
@@ -405,12 +446,35 @@ function createTileOrbitNumber(
     };
 }
 
+function createPreciseTileOrbit(
+    arithmetic: DeepZoomArithmetic,
+    point: PrecisePoint,
+    maxIterations: number,
+    fractal: RenderOptions['fractal'],
+    orbit: OrbitArray,
+): OrbitTrial {
+    const result = arithmetic.iterate(point, maxIterations, fractal, (i, x, y) =>
+        writeDoubleDoubleOrbitPoint(orbit, i, x, y),
+    );
+    const reference = result.status === 'bounded' || fractal.type === 'julia';
+    if (reference && result.status === 'escaped') {
+        for (let i = result.iterations + 1; i <= maxIterations; i++) {
+            orbit.set(orbit.subarray(result.iterations * 4, result.iterations * 4 + 4), i * 4);
+        }
+    }
+    return {
+        ...(reference ? { reference: { orbit, referenceIterations: result.iterations } } : {}),
+        escapeIterations: result.iterations,
+        escapeMagnitude: result.zx * result.zx + result.zy * result.zy,
+    };
+}
+
 function createTileOrbitDD(
     x: DoubleDouble,
     y: DoubleDouble,
     maxIterations: number,
     fractal: RenderOptions['fractal'],
-    orbit: Float32Array,
+    orbit: OrbitArray,
 ): OrbitTrial {
     let zx = fractal.type === 'julia' ? x : dd(0);
     let zy = fractal.type === 'julia' ? y : dd(0);
@@ -464,25 +528,33 @@ function coordinateYDD(viewport: FractalViewport, pixel: number, height: number)
     return ddSub(viewport.centerY, ddMul(dd(pixel - height / 2), viewport.unitsPerPixel));
 }
 
-function writeNumberOrbitPoint(orbit: Float32Array, index: number, re: number, im: number): void {
+function writeNumberOrbitPoint(orbit: OrbitArray, index: number, re: number, im: number): void {
+    if (orbit instanceof Float64Array) {
+        writeOrbitPoint(orbit, index, re, im, 0, 0);
+        return;
+    }
     const reParts = splitFloat(re);
     const imParts = splitFloat(im);
     writeOrbitPoint(orbit, index, reParts.hi, imParts.hi, reParts.lo, imParts.lo);
 }
 
 function writeDoubleDoubleOrbitPoint(
-    orbit: Float32Array,
+    orbit: OrbitArray,
     index: number,
     re: DoubleDouble,
     im: DoubleDouble,
 ): void {
+    if (orbit instanceof Float64Array) {
+        writeOrbitPoint(orbit, index, re.hi, im.hi, re.lo, im.lo);
+        return;
+    }
     const reParts = splitDoubleDoubleForGpu(re);
     const imParts = splitDoubleDoubleForGpu(im);
     writeOrbitPoint(orbit, index, reParts.hi, imParts.hi, reParts.lo, imParts.lo);
 }
 
 function fillNumberOrbitTail(
-    orbit: Float32Array,
+    orbit: OrbitArray,
     start: number,
     maxIterations: number,
     re: number,
@@ -494,7 +566,7 @@ function fillNumberOrbitTail(
 }
 
 function fillDoubleDoubleOrbitTail(
-    orbit: Float32Array,
+    orbit: OrbitArray,
     start: number,
     maxIterations: number,
     re: DoubleDouble,
@@ -506,7 +578,7 @@ function fillDoubleDoubleOrbitTail(
 }
 
 function writeOrbitPoint(
-    orbit: Float32Array,
+    orbit: OrbitArray,
     index: number,
     reHi: number,
     imHi: number,

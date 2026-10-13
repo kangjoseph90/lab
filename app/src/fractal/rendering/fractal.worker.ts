@@ -10,9 +10,16 @@ import {
     iterateMandelbrotPointDD,
 } from '@lab/fractal';
 import type { FractalRenderWorkerRequest, FractalRenderWorkerResponse } from './render-protocol';
+import { PerturbationOrbitFinder } from './perturbation-orbits';
+import type { TileOrbits } from './perturbation-orbits';
+import { iteratePerturbedPoint } from './cpu-perturbation';
+import type { FractalRenderWarning } from './renderer';
+import { sampleOffsets, fractalColor, toLinear, toDisplayByte } from './antialiasing';
+import { deepZoomArithmetic } from './deep-zoom';
 
 const worker = self as DedicatedWorkerGlobalScope;
 let activeRenderId = 0;
+const orbitFinder = new PerturbationOrbitFinder('cpu');
 
 worker.onmessage = (event: MessageEvent<FractalRenderWorkerRequest>) => {
     const message = event.data;
@@ -29,8 +36,33 @@ worker.onmessage = (event: MessageEvent<FractalRenderWorkerRequest>) => {
 async function render(request: Extract<FractalRenderWorkerRequest, { type: 'render' }>) {
     try {
         const { id, width, height, viewport, options } = request;
-        const chunkHeight = 24;
+        const offsets = sampleOffsets(options.antialiasing);
         const useDoubleDouble = options.precision === 'double-double';
+        const arithmetic = options.perturbation
+            ? deepZoomArithmetic(viewport, options.precision)
+            : undefined;
+        const chunkHeight = arithmetic ? 1 : Math.max(1, Math.floor(24 / offsets.length));
+        let references: TileOrbits | undefined;
+        let warning: FractalRenderWarning | undefined;
+        if (options.perturbation) {
+            try {
+                references = orbitFinder.createTileOrbits(
+                    viewport,
+                    width,
+                    height,
+                    options.maxIterations,
+                    options.precision,
+                    options.fractal,
+                );
+                if (references.anchorCount === 0) {
+                    references = undefined;
+                    warning = 'perturbation-anchor-unavailable';
+                }
+            } catch {
+                warning = 'perturbation-failed';
+            }
+            await yieldToMessages();
+        }
         const numberViewport = {
             centerX: ddToNumber(viewport.centerX),
             centerY: ddToNumber(viewport.centerY),
@@ -55,12 +87,65 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
                 let xDD = useDoubleDouble ? ddSub(viewport.centerX, halfWidthOffset!) : undefined;
 
                 for (let px = 0; px < width; px += 1) {
-                    const result =
-                        useDoubleDouble && xDD && yDD
-                            ? renderPointDoubleDouble(options, xDD, yDD)
-                            : renderPointNumber(options, x, y);
+                    const tile = references
+                        ? Math.floor(py / references.tileSize) * references.tilesX +
+                          Math.floor(px / references.tileSize)
+                        : undefined;
+                    let r = 0,
+                        g = 0,
+                        b = 0;
+                    for (const [ox, oy] of offsets) {
+                        const perturbed = references
+                            ? iteratePerturbedPoint(
+                                  references,
+                                  px + ox,
+                                  py + oy,
+                                  numberViewport.unitsPerPixel,
+                                  options.maxIterations,
+                                  options.fractal,
+                                  tile,
+                              )
+                            : undefined;
+                        const result =
+                            perturbed ??
+                            (arithmetic
+                                ? arithmetic.iterate(
+                                      arithmetic.point(px + ox, py + oy, width, height),
+                                      options.maxIterations,
+                                      options.fractal,
+                                  )
+                                : useDoubleDouble && xDD && yDD
+                                  ? renderPointDoubleDouble(
+                                        options,
+                                        ox === 0
+                                            ? xDD
+                                            : ddAdd(xDD, ddMul(dd(ox), viewport.unitsPerPixel)),
+                                        oy === 0
+                                            ? yDD
+                                            : ddSub(yDD, ddMul(dd(oy), viewport.unitsPerPixel)),
+                                    )
+                                  : renderPointNumber(
+                                        options,
+                                        x + ox * numberViewport.unitsPerPixel,
+                                        y - oy * numberViewport.unitsPerPixel,
+                                    ));
+                        const color = fractalColor(result.status, result.smoothIteration);
+                        if (offsets.length === 1) {
+                            r = Math.round(color[0]);
+                            g = Math.round(color[1]);
+                            b = Math.round(color[2]);
+                        } else {
+                            r += toLinear(color[0]);
+                            g += toLinear(color[1]);
+                            b += toLinear(color[2]);
+                        }
+                    }
+                    if (offsets.length > 1) {
+                        r = toDisplayByte(r / offsets.length);
+                        g = toDisplayByte(g / offsets.length);
+                        b = toDisplayByte(b / offsets.length);
+                    }
                     const offset = ((py - startY) * width + px) * 4;
-                    const [r, g, b] = colorize(result.status, result.smoothIteration);
 
                     pixels[offset] = r;
                     pixels[offset + 1] = g;
@@ -78,7 +163,7 @@ async function render(request: Extract<FractalRenderWorkerRequest, { type: 'rend
             await yieldToMessages();
         }
 
-        if (id === activeRenderId) post({ type: 'complete', id });
+        if (id === activeRenderId) post({ type: 'complete', id, ...(warning ? { warning } : {}) });
     } catch (cause) {
         post({
             type: 'error',
@@ -120,18 +205,6 @@ function renderPointDoubleDouble(
         ddComplex(options.fractal.c.re, options.fractal.c.im),
         options.maxIterations,
     );
-}
-
-function colorize(status: 'escaped' | 'bounded', smoothIteration: number | undefined) {
-    if (status === 'bounded') return [18, 20, 22] as const;
-
-    const t = smoothIteration === undefined ? 0 : smoothIteration;
-    const wave = 0.5 + 0.5 * Math.cos(t * 0.12);
-    const r = Math.round(35 + 145 * wave);
-    const g = Math.round(82 + 112 * (1 - wave));
-    const b = Math.round(128 + 80 * Math.sin(t * 0.08) ** 2);
-
-    return [r, g, b] as const;
 }
 
 function post(message: FractalRenderWorkerResponse, transfer: Transferable[] = []): void {

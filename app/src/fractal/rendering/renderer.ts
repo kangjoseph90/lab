@@ -1,6 +1,7 @@
 import type { FractalViewport } from '../viewport';
 import { FractalGpuRenderer } from './gpu-renderer';
 import type { FractalRenderWorkerRequest, FractalRenderWorkerResponse } from './render-protocol';
+import type { FractalAntialiasing } from './antialiasing';
 
 export type RenderOptions = {
     fractal: FractalConfig;
@@ -8,6 +9,7 @@ export type RenderOptions = {
     precision: FractalPrecision;
     backend: FractalBackend;
     perturbation: boolean;
+    antialiasing?: FractalAntialiasing;
 };
 
 export type FractalPrecision = 'number' | 'double-double';
@@ -29,7 +31,13 @@ export class FractalRenderer {
         type: 'module',
     });
     #renderId = 0;
-    #pending: { id: number; resolve: () => void; reject: (cause: Error) => void } | undefined;
+    #pending:
+        | {
+              id: number;
+              resolve: (warning?: FractalRenderWarning) => void;
+              reject: (cause: Error) => void;
+          }
+        | undefined;
 
     constructor(canvas: HTMLCanvasElement) {
         const context = canvas.getContext('2d');
@@ -95,7 +103,11 @@ export class FractalRenderer {
         return this.#renderCpu(id, viewport, options);
     }
 
-    #renderCpu(id: number, viewport: FractalViewport, options: RenderOptions): Promise<void> {
+    #renderCpu(
+        id: number,
+        viewport: FractalViewport,
+        options: RenderOptions,
+    ): Promise<FractalRenderWarning | void> {
         this.#worker.postMessage({
             type: 'render',
             id,
@@ -125,7 +137,7 @@ export class FractalRenderer {
             return;
         }
 
-        this.#pending?.resolve();
+        this.#pending?.resolve(message.warning);
         this.#pending = undefined;
     }
 

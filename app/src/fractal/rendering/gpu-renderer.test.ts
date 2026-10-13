@@ -63,6 +63,20 @@ afterEach(() => {
 });
 
 describe('FractalGpuRenderer perturbation warnings', () => {
+    it('changes AA through uniforms while retaining the pipeline, pixel buffer size, and reference cache', async () => {
+        const { renderer, device } = setup();
+        const finder = vi.spyOn(PerturbationOrbitFinder.prototype, 'createTileOrbits');
+        const view = fractalViewport(-0.5, 0, 0.005);
+        for (const antialiasing of [1, 4, 9] as const) {
+            device.queue.writeBuffer.mockClear();
+            await renderer.render(view, { ...options, antialiasing }, () => true);
+            const uniforms = device.queue.writeBuffer.mock.calls[0]![2] as unknown as Float32Array;
+            expect(uniforms[7]).toBe(antialiasing === 1 ? 1 : antialiasing === 4 ? 2 : 3);
+        }
+        expect(device.createComputePipelineAsync).toHaveBeenCalledTimes(1);
+        expect(finder.mock.results[1]!.value.evaluatedCandidates).toBe(0);
+        expect(finder.mock.results[2]!.value.evaluatedCandidates).toBe(0);
+    });
     it('retains the reference finder between GPU frames', async () => {
         const { renderer } = setup();
         const find = vi.spyOn(PerturbationOrbitFinder.prototype, 'createTileOrbits');

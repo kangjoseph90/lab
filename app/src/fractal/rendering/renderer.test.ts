@@ -3,6 +3,7 @@ import { fractalViewport } from '../viewport';
 import { FractalGpuRenderer } from './gpu-renderer';
 import { FractalRenderer } from './renderer';
 import type { RenderOptions } from './renderer';
+import type { FractalRenderWorkerResponse } from './render-protocol';
 
 const viewport = fractalViewport(-0.5, 0, 0.005);
 const options: RenderOptions = {
@@ -17,14 +18,24 @@ function setup() {
     const context = { putImageData: vi.fn(), drawImage: vi.fn(), fillRect: vi.fn() };
     const canvas = { width: 8, height: 8, getContext: () => context };
     vi.stubGlobal('document', { createElement: () => canvas });
+    let worker!: { onmessage: (event: { data: FractalRenderWorkerResponse }) => void };
     vi.stubGlobal(
         'Worker',
         class {
             postMessage = vi.fn();
+            onmessage!: (event: { data: FractalRenderWorkerResponse }) => void;
+            constructor() {
+                worker = this;
+            }
         },
     );
     const gpu = vi.spyOn(FractalGpuRenderer.prototype, 'render');
-    return { renderer: new FractalRenderer(canvas as unknown as HTMLCanvasElement), gpu };
+    const renderer = new FractalRenderer(canvas as unknown as HTMLCanvasElement);
+    return {
+        renderer,
+        gpu,
+        respond: (data: FractalRenderWorkerResponse) => worker.onmessage({ data }),
+    };
 }
 
 afterEach(() => {
@@ -33,6 +44,19 @@ afterEach(() => {
 });
 
 describe('FractalRenderer fallback warnings', () => {
+    it('propagates CPU warnings and ignores stale worker completion warnings', async () => {
+        const { renderer, respond } = setup();
+        const cpuOptions = { ...options, backend: 'cpu' as const };
+        const first = renderer.render(viewport, cpuOptions);
+        respond({ type: 'complete', id: 1, warning: 'perturbation-anchor-unavailable' });
+        expect(await first).toBe('perturbation-anchor-unavailable');
+        const cancelled = renderer.render(viewport, cpuOptions);
+        const latest = renderer.render(viewport, cpuOptions);
+        expect(await cancelled).toBeUndefined();
+        respond({ type: 'complete', id: 2, warning: 'perturbation-anchor-unavailable' });
+        respond({ type: 'complete', id: 3 });
+        expect(await latest).toBeUndefined();
+    });
     it('propagates the missing-anchor warning', async () => {
         const { renderer, gpu } = setup();
         gpu.mockResolvedValue('perturbation-anchor-unavailable');

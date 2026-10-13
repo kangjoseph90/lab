@@ -1,5 +1,46 @@
 export const WORKGROUP_SIZE = 8;
 
+const COLOR_SHADER = `
+fn colorize(status: f32, smooth_iteration: f32) -> vec3f {
+    if (status == 0.0) { return vec3f(18.0, 20.0, 22.0) / 255.0; }
+    let wave = 0.5 + 0.5 * cos(smooth_iteration * 0.12);
+    let b_wave = sin(smooth_iteration * 0.08);
+    return vec3f(35.0 + 145.0 * wave, 82.0 + 112.0 * (1.0 - wave),
+        128.0 + 80.0 * b_wave * b_wave) / 255.0;
+}
+fn to_linear(c: vec3f) -> vec3f {
+    return select(c / 12.92, pow((c + 0.055) / 1.055, vec3f(2.4)), c > vec3f(0.04045));
+}
+fn to_display(c: vec3f) -> vec3f {
+    let safe = max(c, vec3f(0.0));
+    return select(safe * 12.92, 1.055 * pow(safe, vec3f(1.0 / 2.4)) - 0.055, safe > vec3f(0.0031308));
+}
+`;
+
+const SAMPLE_MAIN = `
+@compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
+fn main(@builtin(global_invocation_id) id: vec3u) {
+    let width = u32(params.size.x);
+    let height = u32(params.size.y);
+    if (id.x >= width || id.y >= height) { return; }
+    let pixel = id.y * width + id.x;
+    let center = vec2f(f32(id.x), f32(id.y));
+    let grid = clamp(u32(params.view.w), 1u, 3u);
+    if (grid == 1u) {
+        pixels[pixel] = pack4x8unorm(vec4f(sample_color(center, id.xy), 1.0));
+        return;
+    }
+    var sum = vec3f(0.0);
+    for (var sy = 0u; sy < grid; sy++) {
+        for (var sx = 0u; sx < grid; sx++) {
+            let offset = (vec2f(f32(sx), f32(sy)) + 0.5) / f32(grid) - 0.5;
+            sum += to_linear(sample_color(center + offset, id.xy));
+        }
+    }
+    pixels[pixel] = pack4x8unorm(vec4f(to_display(sum / f32(grid * grid)), 1.0));
+}
+`;
+
 export const NUMBER_SHADER = `
 struct Params {
     size: vec4f,
@@ -11,19 +52,7 @@ struct Params {
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read_write> pixels: array<u32>;
 
-fn colorize(status: f32, smooth_iteration: f32) -> u32 {
-    if (status == 0.0) {
-        return pack4x8unorm(vec4f(18.0 / 255.0, 20.0 / 255.0, 22.0 / 255.0, 1.0));
-    }
-
-    let wave = 0.5 + 0.5 * cos(smooth_iteration * 0.12);
-    let r = (35.0 + 145.0 * wave) / 255.0;
-    let g = (82.0 + 112.0 * (1.0 - wave)) / 255.0;
-    let b_wave = sin(smooth_iteration * 0.08);
-    let b = (128.0 + 80.0 * b_wave * b_wave) / 255.0;
-
-    return pack4x8unorm(vec4f(r, g, b, 1.0));
-}
+${COLOR_SHADER}
 
 fn smooth_escape(zx: f32, zy: f32, iterations: u32) -> f32 {
     let magnitude = length(vec2f(zx, zy));
@@ -35,20 +64,12 @@ fn smooth_escape(zx: f32, zy: f32, iterations: u32) -> f32 {
     return f32(iterations) + 1.0 - log(log(magnitude)) / log(2.0);
 }
 
-@compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
-fn main(@builtin(global_invocation_id) id: vec3u) {
-    let width = u32(params.size.x);
-    let height = u32(params.size.y);
-
-    if (id.x >= width || id.y >= height) {
-        return;
-    }
+fn sample_color(position: vec2f, tile_id: vec2u) -> vec3f {
 
     let max_iterations = u32(params.size.z);
     let fractal_type = u32(params.size.w);
-    let pixel = id.y * width + id.x;
-    let x = params.view.x + (f32(id.x) - params.size.x * 0.5) * params.view.z;
-    let y = params.view.y - (f32(id.y) - params.size.y * 0.5) * params.view.z;
+    let x = params.view.x + (position.x - params.size.x * 0.5) * params.view.z;
+    let y = params.view.y - (position.y - params.size.y * 0.5) * params.view.z;
     var zx = select(0.0, x, fractal_type == 1u);
     var zy = select(0.0, y, fractal_type == 1u);
     let cx = select(x, params.julia.x, fractal_type == 1u);
@@ -59,8 +80,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         let zy2 = zy * zy;
 
         if (zx2 + zy2 > 4.0) {
-            pixels[pixel] = colorize(1.0, smooth_escape(zx, zy, iterations));
-            return;
+            return colorize(1.0, smooth_escape(zx, zy, iterations));
         }
 
         zy = 2.0 * zx * zy + cy;
@@ -71,12 +91,13 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let zy2 = zy * zy;
 
     if (zx2 + zy2 > 4.0) {
-        pixels[pixel] = colorize(1.0, smooth_escape(zx, zy, max_iterations));
-        return;
+        return colorize(1.0, smooth_escape(zx, zy, max_iterations));
     }
 
-    pixels[pixel] = colorize(0.0, 0.0);
+    return colorize(0.0, 0.0);
 }
+
+${SAMPLE_MAIN}
 `;
 
 export const DOUBLE_DOUBLE_SHADER = `
@@ -158,19 +179,7 @@ fn dd_to_f32(a: DD) -> f32 {
     return a.hi + a.lo;
 }
 
-fn colorize(status: f32, smooth_iteration: f32) -> u32 {
-    if (status == 0.0) {
-        return pack4x8unorm(vec4f(18.0 / 255.0, 20.0 / 255.0, 22.0 / 255.0, 1.0));
-    }
-
-    let wave = 0.5 + 0.5 * cos(smooth_iteration * 0.12);
-    let r = (35.0 + 145.0 * wave) / 255.0;
-    let g = (82.0 + 112.0 * (1.0 - wave)) / 255.0;
-    let b_wave = sin(smooth_iteration * 0.08);
-    let b = (128.0 + 80.0 * b_wave * b_wave) / 255.0;
-
-    return pack4x8unorm(vec4f(r, g, b, 1.0));
-}
+${COLOR_SHADER}
 
 fn smooth_escape(zx: DD, zy: DD, iterations: u32) -> f32 {
     let magnitude = length(vec2f(dd_to_f32(zx), dd_to_f32(zy)));
@@ -182,20 +191,12 @@ fn smooth_escape(zx: DD, zy: DD, iterations: u32) -> f32 {
     return f32(iterations) + 1.0 - log(log(magnitude)) / log(2.0);
 }
 
-@compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
-fn main(@builtin(global_invocation_id) id: vec3u) {
-    let width = u32(params.size.x);
-    let height = u32(params.size.y);
-
-    if (id.x >= width || id.y >= height) {
-        return;
-    }
+fn sample_color(position: vec2f, tile_id: vec2u) -> vec3f {
 
     let max_iterations = u32(params.size.z);
     let fractal_type = u32(params.size.w);
-    let pixel = id.y * width + id.x;
-    let x_offset = dd(f32(id.x) - params.size.x * 0.5);
-    let y_offset = dd(f32(id.y) - params.size.y * 0.5);
+    let x_offset = dd(position.x - params.size.x * 0.5);
+    let y_offset = dd(position.y - params.size.y * 0.5);
     let units_per_pixel = DD(params.view.z, params.view_lo.z);
     let x = dd_add(DD(params.view.x, params.view_lo.x), dd_mul(x_offset, units_per_pixel));
     let y = dd_sub(DD(params.view.y, params.view_lo.y), dd_mul(y_offset, units_per_pixel));
@@ -216,8 +217,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         let zy2 = dd_sqr(zy);
 
         if (dd_to_f32(dd_add(zx2, zy2)) > 4.0) {
-            pixels[pixel] = colorize(1.0, smooth_escape(zx, zy, iterations));
-            return;
+            return colorize(1.0, smooth_escape(zx, zy, iterations));
         }
 
         zy = dd_add(dd_add(dd_mul(zx, zy), dd_mul(zx, zy)), cy);
@@ -228,12 +228,13 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let zy2 = dd_sqr(zy);
 
     if (dd_to_f32(dd_add(zx2, zy2)) > 4.0) {
-        pixels[pixel] = colorize(1.0, smooth_escape(zx, zy, max_iterations));
-        return;
+        return colorize(1.0, smooth_escape(zx, zy, max_iterations));
     }
 
-    pixels[pixel] = colorize(0.0, 0.0);
+    return colorize(0.0, 0.0);
 }
+
+${SAMPLE_MAIN}
 `;
 
 export const PERTURBATION_SHADER = `
@@ -318,19 +319,7 @@ fn dd_to_f32(a: DD) -> f32 {
     return a.hi + a.lo;
 }
 
-fn colorize(status: f32, smooth_iteration: f32) -> u32 {
-    if (status == 0.0) {
-        return pack4x8unorm(vec4f(18.0 / 255.0, 20.0 / 255.0, 22.0 / 255.0, 1.0));
-    }
-
-    let wave = 0.5 + 0.5 * cos(smooth_iteration * 0.12);
-    let r = (35.0 + 145.0 * wave) / 255.0;
-    let g = (82.0 + 112.0 * (1.0 - wave)) / 255.0;
-    let b_wave = sin(smooth_iteration * 0.08);
-    let b = (128.0 + 80.0 * b_wave * b_wave) / 255.0;
-
-    return pack4x8unorm(vec4f(r, g, b, 1.0));
-}
+${COLOR_SHADER}
 
 fn smooth_escape(zx: DD, zy: DD, iterations: u32) -> f32 {
     let magnitude = length(vec2f(dd_to_f32(zx), dd_to_f32(zy)));
@@ -352,22 +341,14 @@ fn orbit_im(index: u32) -> DD {
     return DD(value.y, value.w);
 }
 
-@compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
-fn main(@builtin(global_invocation_id) id: vec3u) {
-    let width = u32(params.size.x);
-    let height = u32(params.size.y);
-
-    if (id.x >= width || id.y >= height) {
-        return;
-    }
+fn sample_color(position: vec2f, tile_id: vec2u) -> vec3f {
 
     let max_iterations = u32(params.size.z);
     let fractal_type = u32(params.size.w);
-    let pixel = id.y * width + id.x;
     let tile_size = u32(params.perturbation.x);
     let tiles_x = u32(params.perturbation.y);
-    let tile_x = id.x / tile_size;
-    let tile_y = id.y / tile_size;
+    let tile_x = tile_id.x / tile_size;
+    let tile_y = tile_id.y / tile_size;
     let tile_index = tile_y * tiles_x + tile_x;
     let orbit_stride = max_iterations + 1u;
     let orbit_base = tile_index * orbit_stride;
@@ -375,8 +356,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let reference_iterations = u32(anchor.z);
 
     let units_per_pixel = DD(params.view.z, params.view_lo.z);
-    let delta_x = dd_mul(dd(f32(id.x) - anchor.x), units_per_pixel);
-    let delta_y = dd_mul(dd(anchor.y - f32(id.y)), units_per_pixel);
+    let delta_x = dd_mul(dd(position.x - anchor.x), units_per_pixel);
+    let delta_y = dd_mul(dd(anchor.y - position.y), units_per_pixel);
     var dcx = delta_x;
     var dcy = delta_y;
     var dzx = dd(0.0);
@@ -397,8 +378,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         let zy2 = dd_sqr(zy);
 
         if (dd_to_f32(dd_add(zx2, zy2)) > 4.0) {
-            pixels[pixel] = colorize(1.0, smooth_escape(zx, zy, iterations));
-            return;
+            return colorize(1.0, smooth_escape(zx, zy, iterations));
         }
 
         if (fractal_type == 1u && iterations >= reference_iterations) {
@@ -416,11 +396,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
                 let direct_zy2 = dd_sqr(direct_zy);
 
                 if (dd_to_f32(dd_add(direct_zx2, direct_zy2)) > 4.0) {
-                    pixels[pixel] = colorize(
+                    return colorize(
                         1.0,
                         smooth_escape(direct_zx, direct_zy, direct_iterations),
                     );
-                    return;
                 }
 
                 direct_zy = dd_add(dd_mul(dd(2.0), dd_mul(direct_zx, direct_zy)), cy);
@@ -431,15 +410,13 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
             let direct_zy2 = dd_sqr(direct_zy);
 
             if (dd_to_f32(dd_add(direct_zx2, direct_zy2)) > 4.0) {
-                pixels[pixel] = colorize(
+                return colorize(
                     1.0,
                     smooth_escape(direct_zx, direct_zy, max_iterations),
                 );
-                return;
             }
 
-            pixels[pixel] = colorize(0.0, 0.0);
-            return;
+            return colorize(0.0, 0.0);
         }
 
         let zre = orbit_re(orbit_index);
@@ -471,10 +448,11 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let zy2 = dd_sqr(zy);
 
     if (dd_to_f32(dd_add(zx2, zy2)) > 4.0) {
-        pixels[pixel] = colorize(1.0, smooth_escape(zx, zy, max_iterations));
-        return;
+        return colorize(1.0, smooth_escape(zx, zy, max_iterations));
     }
 
-    pixels[pixel] = colorize(0.0, 0.0);
+    return colorize(0.0, 0.0);
 }
+
+${SAMPLE_MAIN}
 `;

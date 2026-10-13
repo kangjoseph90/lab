@@ -1,5 +1,8 @@
 import './styles.css';
 import { FractalRenderer } from './fractal/rendering/renderer';
+import type { RenderOptions } from './fractal/rendering/renderer';
+import { RenderRefinement } from './fractal/rendering/render-refinement';
+import type { FractalAntialiasing } from './fractal/rendering/antialiasing';
 import {
     fractalScreenToWorldNumber,
     fractalViewportToNumber,
@@ -93,6 +96,14 @@ app.innerHTML = `
           <label for="max-iterations">Iterations</label>
           <input id="max-iterations" name="max-iterations" type="number" min="16" max="4096" step="16" value="256" />
         </div>
+        <div class="field">
+          <label for="fractal-antialiasing">Antialiasing</label>
+          <select id="fractal-antialiasing" name="fractal-antialiasing">
+            <option value="1">Off</option>
+            <option value="4">4 samples</option>
+            <option value="9">9 samples</option>
+          </select>
+        </div>
         <p class="fractal-name" id="fractal-name">Mandelbrot set</p>
         <p class="render-warning" id="fractal-render-warning" role="status"></p>
         <p class="backend-error" id="fractal-render-error" role="alert"></p>
@@ -144,6 +155,7 @@ const juliaFields = requireElement<HTMLElement>('#julia-fields');
 const juliaRealInput = requireElement<HTMLInputElement>('#julia-real');
 const juliaImagInput = requireElement<HTMLInputElement>('#julia-imag');
 const maxIterationsInput = requireElement<HTMLInputElement>('#max-iterations');
+const fractalAntialiasingInput = requireElement<HTMLSelectElement>('#fractal-antialiasing');
 const fractalName = requireElement<HTMLElement>('#fractal-name');
 const projectTitle = requireElement<HTMLElement>('#project-title');
 const projectSubtitle = requireElement<HTMLElement>('#project-subtitle');
@@ -152,6 +164,7 @@ const coordinates = requireElement<HTMLOutputElement>('#coordinates');
 const rendering = requireElement<HTMLElement>('#rendering');
 const graphRenderer = new GraphRenderer(canvas);
 const fractalRenderer = new FractalRenderer(canvas);
+const renderRefinement = new RenderRefinement();
 let activeMode: Mode = 'graph';
 let graphViewport: Viewport = { ...DEFAULT_VIEWPORT };
 let fractalCurrentViewport: FractalViewport = scaleFractalViewportUnits(FRACTAL_VIEWPORT, 1);
@@ -237,34 +250,46 @@ function resizeCanvas(): void {
     scheduleRender();
 }
 
-function scheduleRender(): void {
+function scheduleRender(interactive = false): void {
     const request = ++renderRequest;
     graphRenderError.textContent = '';
     fractalRenderError.textContent = '';
     fractalRenderWarning.textContent = '';
     rendering.classList.add('is-visible');
-    const render =
-        activeMode === 'graph'
-            ? graphRenderer.render(graphViewport, {
-                  lineWidth: 1.35,
-                  color: [19, 105, 196],
-                  backend: readGraphBackend(),
-              })
-            : fractalRenderer.render(fractalCurrentViewport, {
-                  fractal: readFractalConfig(),
-                  maxIterations: readMaxIterations(),
-                  precision: readFractalPrecision(),
-                  backend: readFractalBackend(),
-                  perturbation: readFractalPerturbation(),
-              });
+    const mode = activeMode;
+    const viewport = fractalCurrentViewport;
+    const antialiasing = readFractalAntialiasing();
+    const fractalOptions: RenderOptions = {
+        fractal: readFractalConfig(),
+        maxIterations: readMaxIterations(),
+        precision: readFractalPrecision(),
+        backend: readFractalBackend(),
+        perturbation: readFractalPerturbation(),
+        antialiasing,
+    };
+    const render = renderRefinement.run(
+        (refined) =>
+            mode === 'graph'
+                ? graphRenderer.render(graphViewport, {
+                      lineWidth: 1.35,
+                      color: [19, 105, 196],
+                      backend: readGraphBackend(),
+                  })
+                : fractalRenderer.render(viewport, {
+                      ...fractalOptions,
+                      antialiasing: refined ? antialiasing : 1,
+                  }),
+        interactive && mode === 'fractal' && antialiasing > 1,
+    );
 
     void render
         .then((warning) => {
             if (request !== renderRequest || activeMode !== 'fractal' || !warning) return;
+            const backend = readFractalBackend() === 'cpu' ? 'CPU' : 'GPU';
             fractalRenderWarning.textContent =
                 warning === 'perturbation-anchor-unavailable'
-                    ? '기준점(피봇)을 찾지 못해 일반 GPU로 렌더링했습니다. 깊은 줌의 정확도가 낮아질 수 있습니다.'
-                    : 'Perturbation 렌더링에 실패해 일반 GPU 렌더링으로 전환했습니다.';
+                    ? `기준점(피봇)을 찾지 못해 일반 ${backend}로 렌더링했습니다. 깊은 줌의 정확도가 낮아질 수 있습니다.`
+                    : `Perturbation 렌더링에 실패해 일반 ${backend} 렌더링으로 전환했습니다.`;
         })
         .catch((cause: unknown) => {
             if (request !== renderRequest) return;
@@ -307,6 +332,9 @@ form.addEventListener('submit', (event) => {
 });
 
 canvas.addEventListener('pointerdown', (event) => {
+    renderRefinement.cancel();
+    ++renderRequest;
+    rendering.classList.remove('is-visible');
     canvas.setPointerCapture(event.pointerId);
     dragStart =
         activeMode === 'graph'
@@ -364,7 +392,7 @@ canvas.addEventListener('pointerup', (event) => {
     canvas.releasePointerCapture(event.pointerId);
     dragStart = undefined;
     canvas.classList.remove('is-dragging');
-    scheduleRender();
+    scheduleRender(true);
 });
 
 canvas.addEventListener(
@@ -390,7 +418,7 @@ canvas.addEventListener(
                 factor,
             );
         }
-        scheduleRender();
+        scheduleRender(true);
     },
     { passive: false },
 );
@@ -417,7 +445,12 @@ fractalTypeInput.addEventListener('change', () => {
         scheduleRender();
     }
 });
-[fractalPrecisionInput, fractalBackendInput, fractalPerturbationInput].forEach((control) => {
+[
+    fractalPrecisionInput,
+    fractalBackendInput,
+    fractalPerturbationInput,
+    fractalAntialiasingInput,
+].forEach((control) => {
     control.addEventListener('change', () => {
         updateFractalControls();
         if (activeMode === 'fractal') scheduleRender();
@@ -446,7 +479,7 @@ function zoomFromCenter(factor: number): void {
             factor,
         );
     }
-    scheduleRender();
+    scheduleRender(true);
 }
 
 function setMode(mode: Mode): void {
@@ -527,6 +560,14 @@ function readFractalPerturbation() {
     return fractalPerturbationInput.checked;
 }
 
+function readFractalAntialiasing(): FractalAntialiasing {
+    return fractalAntialiasingInput.value === '9'
+        ? 9
+        : fractalAntialiasingInput.value === '4'
+          ? 4
+          : 1;
+}
+
 function readNumber(inputElement: HTMLInputElement, fallback: number): number {
     const value = Number.parseFloat(inputElement.value);
     return Number.isFinite(value) ? value : fallback;
@@ -558,12 +599,9 @@ function updateFractalControls(): void {
     const precisionLabel = precision === 'double-double' ? 'double-double' : 'number';
     const backend = readFractalBackend();
     const backendLabel = backend === 'gpu' ? 'GPU' : 'CPU';
-    const canPerturb = backend === 'gpu';
-    const perturbationLabel = canPerturb && readFractalPerturbation() ? ', perturbation' : '';
+    const perturbationLabel = readFractalPerturbation() ? ', perturbation' : '';
 
     juliaFields.classList.toggle('is-hidden', !isJulia);
-    fractalPerturbationInput.disabled = !canPerturb;
-    if (!canPerturb) fractalPerturbationInput.checked = false;
     fractalName.textContent = isJulia
         ? `Julia set, c = ${cRe.toFixed(3)} + ${cIm.toFixed(3)}i, ${precisionLabel}, ${backendLabel}${perturbationLabel}`
         : `Mandelbrot set, ${precisionLabel}, ${backendLabel}${perturbationLabel}`;
