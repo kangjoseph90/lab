@@ -278,6 +278,20 @@ select {
 .backend-error:empty {
     display: none;
 }
+.render-warning {
+    margin: 0;
+    padding: 8px 10px;
+    border-left: 2px solid #c68a24;
+    border-radius: 3px;
+    background: #fff8e9;
+    color: #805817;
+    word-break: keep-all;
+    font-size: 0.75rem;
+    line-height: 1.5;
+}
+.render-warning:empty {
+    display: none;
+}
 .field {
     display: grid;
     gap: 9px;

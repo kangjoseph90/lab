@@ -94,6 +94,7 @@ app.innerHTML = `
           <input id="max-iterations" name="max-iterations" type="number" min="16" max="4096" step="16" value="256" />
         </div>
         <p class="fractal-name" id="fractal-name">Mandelbrot set</p>
+        <p class="render-warning" id="fractal-render-warning" role="status"></p>
         <p class="backend-error" id="fractal-render-error" role="alert"></p>
       </section>
       <details class="graph-presets" id="graph-presets">
@@ -127,6 +128,7 @@ const graphPanel = requireElement<HTMLElement>('#graph-panel');
 const graphBackendInput = requireElement<HTMLSelectElement>('#graph-backend');
 const graphRenderError = requireElement<HTMLElement>('#graph-render-error');
 const fractalRenderError = requireElement<HTMLElement>('#fractal-render-error');
+const fractalRenderWarning = requireElement<HTMLElement>('#fractal-render-warning');
 const graphPresets = requireElement<HTMLElement>('#graph-presets');
 const presetSelect = requireElement<HTMLSelectElement>('#preset-select');
 const presetDescription = requireElement<HTMLElement>('#preset-description');
@@ -239,6 +241,7 @@ function scheduleRender(): void {
     const request = ++renderRequest;
     graphRenderError.textContent = '';
     fractalRenderError.textContent = '';
+    fractalRenderWarning.textContent = '';
     rendering.classList.add('is-visible');
     const render =
         activeMode === 'graph'
@@ -256,6 +259,13 @@ function scheduleRender(): void {
               });
 
     void render
+        .then((warning) => {
+            if (request !== renderRequest || activeMode !== 'fractal' || !warning) return;
+            fractalRenderWarning.textContent =
+                warning === 'perturbation-anchor-unavailable'
+                    ? '기준점(피봇)을 찾지 못해 일반 GPU로 렌더링했습니다. 깊은 줌의 정확도가 낮아질 수 있습니다.'
+                    : 'Perturbation 렌더링에 실패해 일반 GPU 렌더링으로 전환했습니다.';
+        })
         .catch((cause: unknown) => {
             if (request !== renderRequest) return;
             if (activeMode === 'graph') {

@@ -7,7 +7,7 @@ import {
 } from './gpu-shaders';
 import { createTileOrbits } from './perturbation-orbits';
 import { splitDoubleDoubleForGpu, splitFloat } from './gpu-precision';
-import type { RenderOptions } from './renderer';
+import type { FractalRenderWarning, RenderOptions } from './renderer';
 
 const UNIFORM_BUFFER_SIZE = 20 * Float32Array.BYTES_PER_ELEMENT;
 
@@ -28,7 +28,7 @@ export class FractalGpuRenderer {
         viewport: FractalViewport,
         options: RenderOptions,
         isCurrent: () => boolean,
-    ): Promise<void> {
+    ): Promise<FractalRenderWarning | void> {
         const device = await this.#getDevice();
         const width = this.#canvas.width;
         const height = this.#canvas.height;
@@ -157,6 +157,7 @@ export class FractalGpuRenderer {
         readBuffer.destroy();
         orbitBuffer?.destroy();
         anchorBuffer?.destroy();
+        if (perturbation && !usePerturbation) return 'perturbation-anchor-unavailable';
     }
 
     async #getDevice(): Promise<GPUDevice> {

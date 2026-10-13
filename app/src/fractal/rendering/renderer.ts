@@ -13,6 +13,8 @@ export type RenderOptions = {
 export type FractalPrecision = 'number' | 'double-double';
 export type FractalBackend = 'cpu' | 'gpu';
 
+export type FractalRenderWarning = 'perturbation-anchor-unavailable' | 'perturbation-failed';
+
 export type FractalConfig =
     | { type: 'mandelbrot' }
     | { type: 'julia'; c: { re: number; im: number } };
@@ -64,21 +66,26 @@ export class FractalRenderer {
         this.#pending = undefined;
     }
 
-    render(viewport: FractalViewport, options: RenderOptions): Promise<void> {
+    render(
+        viewport: FractalViewport,
+        options: RenderOptions,
+    ): Promise<FractalRenderWarning | void> {
         this.#pending?.resolve();
         const id = ++this.#renderId;
 
         if (options.backend === 'gpu') {
             return this.#gpu
                 .render(viewport, options, () => id === this.#renderId)
-                .catch((cause) => {
+                .catch(async (cause) => {
                     if (id !== this.#renderId) return;
                     if (options.perturbation) {
-                        return this.#gpu.render(
+                        await this.#gpu.render(
                             viewport,
                             { ...options, perturbation: false },
                             () => id === this.#renderId,
                         );
+                        if (id === this.#renderId) return 'perturbation-failed' as const;
+                        return;
                     }
 
                     throw cause;
