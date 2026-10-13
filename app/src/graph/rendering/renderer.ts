@@ -1,12 +1,17 @@
+import { compileEquationExpr } from '../equation';
 import type { Equation } from '../equation';
+import { GraphGpuRenderer } from './gpu-renderer';
 import type { RenderWorkerRequest, RenderWorkerResponse } from './render-protocol';
 import type { Viewport } from '../viewport';
 import { screenToWorld, worldToScreen } from '../viewport';
 
 export type RenderOptions = {
+    backend?: GraphBackend;
     lineWidth: number;
     color: readonly [number, number, number];
 };
+
+export type GraphBackend = 'cpu' | 'gpu';
 
 export class GraphRenderer {
     readonly #canvas: HTMLCanvasElement;
@@ -21,6 +26,8 @@ export class GraphRenderer {
     #renderId = 0;
     #pending: { id: number; resolve: () => void; reject: (cause: Error) => void } | undefined;
     #viewport: Viewport | undefined;
+    readonly #gpu = new GraphGpuRenderer();
+    #equation: Equation | undefined;
 
     constructor(canvas: HTMLCanvasElement) {
         const context = canvas.getContext('2d');
@@ -40,6 +47,9 @@ export class GraphRenderer {
     }
 
     setEquation(equation: Equation): void {
+        compileEquationExpr(equation);
+        this.cancel();
+        this.#equation = equation;
         this.#worker.postMessage({ type: 'set-equation', equation } satisfies RenderWorkerRequest);
     }
 
@@ -64,11 +74,30 @@ export class GraphRenderer {
     }
 
     render(viewport: Viewport, options: RenderOptions): Promise<void> {
-        this.#pending?.resolve();
-        const id = ++this.#renderId;
+        this.cancel();
+        const id = this.#renderId;
         this.#viewport = viewport;
         this.#buffer.width = this.#canvas.width;
         this.#buffer.height = this.#canvas.height;
+
+        if (options.backend === 'gpu') {
+            if (!this.#equation) return Promise.reject(new Error('No equation has been compiled.'));
+            return this.#gpu
+                .render(
+                    this.#equation,
+                    viewport,
+                    this.#canvas.width,
+                    this.#canvas.height,
+                    options,
+                    () => id === this.#renderId,
+                )
+                .then((image) => {
+                    if (!image || id !== this.#renderId) return;
+                    this.#bufferContext.putImageData(image, 0, 0);
+                    this.#context.putImageData(image, 0, 0);
+                    drawGrid(this.#context, viewport, this.#canvas.width, this.#canvas.height);
+                });
+        }
 
         this.#worker.postMessage({
             type: 'render',

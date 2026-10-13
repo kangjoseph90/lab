@@ -28,10 +28,20 @@ interface GPUAdapter {
 
 interface GPUDevice {
     readonly queue: GPUQueue;
+    readonly limits: {
+        readonly maxStorageBufferBindingSize: number;
+        readonly maxBufferSize: number;
+    };
+    readonly lost: Promise<{ message: string }>;
+    pushErrorScope(filter: 'validation'): void;
+    popErrorScope(): Promise<{ message: string } | null>;
     createBindGroup(descriptor: GPUBindGroupDescriptor): GPUBindGroup;
     createBuffer(descriptor: GPUBufferDescriptor): GPUBuffer;
     createCommandEncoder(): GPUCommandEncoder;
     createComputePipeline(descriptor: GPUComputePipelineDescriptor): GPUComputePipeline;
+    createComputePipelineAsync?(
+        descriptor: GPUComputePipelineDescriptor,
+    ): Promise<GPUComputePipeline>;
     createShaderModule(descriptor: GPUShaderModuleDescriptor): GPUShaderModule;
 }
 
@@ -100,4 +110,8 @@ interface GPUComputePassEncoder {
 interface GPUBindGroup {}
 interface GPUBindGroupLayout {}
 interface GPUCommandBuffer {}
-interface GPUShaderModule {}
+interface GPUShaderModule {
+    getCompilationInfo(): Promise<{
+        messages: { type: 'error' | 'warning' | 'info'; message: string }[];
+    }>;
+}

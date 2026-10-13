@@ -42,6 +42,16 @@ app.innerHTML = `
         </div>
         <p class="error" id="expression-error" role="alert"></p>
       </form>
+      <section class="graph-panel" id="graph-panel">
+        <div class="field">
+          <label for="graph-backend">Backend</label>
+          <select id="graph-backend" name="graph-backend">
+            <option value="gpu">GPU</option>
+            <option value="cpu">CPU</option>
+          </select>
+        </div>
+        <p class="backend-error" id="graph-render-error" role="alert"></p>
+      </section>
       <section class="fractal-panel is-hidden" id="fractal-panel">
         <div class="field">
           <label for="fractal-type">Type</label>
@@ -103,6 +113,10 @@ const canvas = requireElement<HTMLCanvasElement>('#graph');
 const form = requireElement<HTMLFormElement>('#expression-form');
 const input = requireElement<HTMLInputElement>('#expression');
 const error = requireElement<HTMLElement>('#expression-error');
+const graphPanel = requireElement<HTMLElement>('#graph-panel');
+const graphBackendInput = requireElement<HTMLSelectElement>('#graph-backend');
+const graphRenderError = requireElement<HTMLElement>('#graph-render-error');
+if (!navigator.gpu) graphBackendInput.value = 'cpu';
 const fractalPanel = requireElement<HTMLElement>('#fractal-panel');
 const graphModeButton = requireElement<HTMLButtonElement>('#mode-graph');
 const fractalModeButton = requireElement<HTMLButtonElement>('#mode-fractal');
@@ -157,10 +171,15 @@ function resizeCanvas(): void {
 
 function scheduleRender(): void {
     const request = ++renderRequest;
+    graphRenderError.textContent = '';
     rendering.classList.add('is-visible');
     const render =
         activeMode === 'graph'
-            ? graphRenderer.render(graphViewport, { lineWidth: 1.35, color: [19, 105, 196] })
+            ? graphRenderer.render(graphViewport, {
+                  lineWidth: 1.35,
+                  color: [19, 105, 196],
+                  backend: readGraphBackend(),
+              })
             : fractalRenderer.render(fractalCurrentViewport, {
                   fractal: readFractalConfig(),
                   maxIterations: readMaxIterations(),
@@ -171,7 +190,13 @@ function scheduleRender(): void {
 
     void render
         .catch((cause: unknown) => {
-            showError(cause);
+            if (request !== renderRequest) return;
+            if (activeMode === 'graph') {
+                graphRenderError.textContent =
+                    cause instanceof Error ? cause.message : String(cause);
+            } else {
+                showError(cause);
+            }
         })
         .finally(() => {
             if (request === renderRequest) rendering.classList.remove('is-visible');
@@ -318,6 +343,10 @@ requireElement<HTMLButtonElement>('#reset').addEventListener('click', () => {
 });
 
 graphModeButton.addEventListener('click', () => setMode('graph'));
+graphBackendInput.addEventListener('change', () => {
+    updateFractalControls();
+    if (activeMode === 'graph') scheduleRender();
+});
 fractalModeButton.addEventListener('click', () => setMode('fractal'));
 fractalTypeInput.addEventListener('change', () => {
     updateFractalControls();
@@ -367,6 +396,7 @@ function setMode(mode: Mode): void {
     graphModeButton.classList.toggle('is-active', activeMode === 'graph');
     fractalModeButton.classList.toggle('is-active', activeMode === 'fractal');
     form.classList.toggle('is-hidden', activeMode !== 'graph');
+    graphPanel.classList.toggle('is-hidden', activeMode !== 'graph');
     fractalPanel.classList.toggle('is-hidden', activeMode !== 'fractal');
     projectTitle.textContent = activeMode === 'graph' ? 'Graph Lab' : 'Fractal Lab';
     updateFractalControls();
@@ -428,6 +458,10 @@ function readFractalBackend() {
     return fractalBackendInput.value === 'cpu' ? 'cpu' : 'gpu';
 }
 
+function readGraphBackend() {
+    return graphBackendInput.value === 'cpu' ? 'cpu' : 'gpu';
+}
+
 function readFractalPerturbation() {
     return fractalPerturbationInput.checked;
 }
@@ -475,7 +509,7 @@ function updateFractalControls(): void {
         : `Mandelbrot set, ${precisionLabel}, ${backendLabel}${perturbationLabel}`;
     projectSubtitle.textContent =
         activeMode === 'graph'
-            ? 'Implicit calculator'
+            ? `Implicit calculator, ${readGraphBackend().toUpperCase()}`
             : isJulia
               ? 'Julia explorer'
               : 'Mandelbrot explorer';
@@ -488,4 +522,5 @@ function requireElement<T extends Element>(selector: string): T {
 }
 
 const resizeObserver = new ResizeObserver(resizeCanvas);
+updateFractalControls();
 resizeObserver.observe(canvas);
